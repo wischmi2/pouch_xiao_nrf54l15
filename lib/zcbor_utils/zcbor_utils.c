@@ -4,11 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(zcbor_util, CONFIG_POUCH_LOG_LEVEL);
+#include <pouch/port.h>
+POUCH_LOG_REGISTER(zcbor_util, CONFIG_POUCH_COMMON_LOG_LEVEL);
 
 #include <errno.h>
-
 #include <zcbor_utils.h>
 
 static struct zcbor_map_entry *map_entry_get(struct zcbor_map_entry *entries,
@@ -88,7 +87,7 @@ static int zcbor_map_key_decode(zcbor_state_t *zsd, struct zcbor_map_key *key)
             ok = zcbor_tstr_decode(zsd, &key->tstr);
             if (!ok)
             {
-                LOG_WRN("Failed to decode %s map key", "tstr");
+                POUCH_LOG_WRN("Failed to decode %s map key", "tstr");
                 return -EBADMSG;
             }
 
@@ -98,7 +97,7 @@ static int zcbor_map_key_decode(zcbor_state_t *zsd, struct zcbor_map_key *key)
             ok = zcbor_uint32_decode(zsd, &key->u32);
             if (!ok)
             {
-                LOG_WRN("Failed to decode %s map key", "u32");
+                POUCH_LOG_WRN("Failed to decode %s map key", "u32");
                 return -EBADMSG;
             }
 
@@ -122,7 +121,7 @@ int zcbor_map_decode(zcbor_state_t *zsd, struct zcbor_map_entry *entries, size_t
     ok = zcbor_map_start_decode(zsd);
     if (!ok)
     {
-        LOG_WRN("Did not start CBOR map correctly");
+        POUCH_LOG_WRN("Did not start CBOR map correctly");
         return -EBADMSG;
     }
 
@@ -170,7 +169,7 @@ map_end_decode:
     ok = zcbor_list_map_end_force_decode(zsd);
     if (!ok)
     {
-        LOG_WRN("Did not end CBOR map correctly");
+        POUCH_LOG_WRN("Did not end CBOR map correctly");
         return -EBADMSG;
     }
 

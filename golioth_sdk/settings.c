@@ -4,10 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(glth_settings, CONFIG_GOLIOTH_LOG_LEVEL);
-
-#include <zephyr/drivers/gpio.h>
+#include <pouch/port.h>
+POUCH_LOG_REGISTER(settings, CONFIG_GOLIOTH_LOG_LEVEL);
 
 #include <pouch/types.h>
 #include <pouch/uplink.h>
@@ -15,7 +13,7 @@ LOG_MODULE_REGISTER(glth_settings, CONFIG_GOLIOTH_LOG_LEVEL);
 
 #include <zcbor_decode.h>
 
-#include <golioth/settings_types.h>
+#include <pouch/golioth/settings_types.h>
 
 #include "dispatch.h"
 #include "settings.h"
@@ -209,8 +207,8 @@ static void settings_uplink(void)
                              POUCH_CONTENT_TYPE_CBOR,
                              buf,
                              zse->payload - buf,
-                             K_FOREVER);
+                             POUCH_FOREVER);
 }
 
 GOLIOTH_DOWNLINK_HANDLER(settings, SETTINGS_DOWNLINK_PATH, NULL, settings_downlink);
-GOLIOTH_UPLINK_HANDLER(settings_status, settings_uplink);
+POUCH_UPLINK_HANDLER(settings_uplink);

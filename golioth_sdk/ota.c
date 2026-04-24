@@ -6,8 +6,8 @@
 
 #include <string.h>
 
-#include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(ota, CONFIG_GOLIOTH_LOG_LEVEL);
+#include <pouch/port.h>
+POUCH_LOG_REGISTER(ota, CONFIG_GOLIOTH_LOG_LEVEL);
 
 #include <pouch/types.h>
 #include <pouch/uplink.h>
@@ -25,6 +25,18 @@ LOG_MODULE_REGISTER(ota, CONFIG_GOLIOTH_LOG_LEVEL);
     (sizeof(GOLIOTH_OTA_COMPONENT_PATH_PREFIX) + CONFIG_GOLIOTH_OTA_MAX_PACKAGE_NAME_LEN)
 
 #define GOLIOTH_OTA_COMPONENT_HASH_HEX_LEN 64
+
+/* OTA status includes:
+   - state (enum)
+   - reason (enum)
+   - package name (string)
+   - current version (string)
+   - target version (string)
+ */
+#define OTA_STATUS_FIXED_SIZE 21
+#define OTA_STATUS_ENCODE_BUF_SIZE                                  \
+    (OTA_STATUS_FIXED_SIZE + 2 * CONFIG_GOLIOTH_OTA_MAX_VERSION_LEN \
+     + CONFIG_GOLIOTH_OTA_MAX_PACKAGE_NAME_LEN)
 
 struct component_tstr_value
 {
@@ -237,7 +249,7 @@ static void ota_uplink(void)
     while (
         golioth_ota_get_status(component_idx++, &name, &current_version, &target_version, &state))
     {
-        uint8_t encode_buf[64];
+        uint8_t encode_buf[OTA_STATUS_ENCODE_BUF_SIZE];
         ZCBOR_STATE_E(zse, 1, encode_buf, sizeof(encode_buf), 1);
 
         bool ok = zcbor_map_start_encode(zse, 1);
@@ -294,7 +306,7 @@ static void ota_uplink(void)
                                            POUCH_CONTENT_TYPE_CBOR,
                                            encode_buf,
                                            zse->payload - encode_buf,
-                                           K_FOREVER);
+                                           POUCH_FOREVER);
         if (err)
         {
             LOG_ERR("Could not report OTA state for %s (%d)", name, err);
@@ -307,4 +319,4 @@ GOLIOTH_DOWNLINK_HANDLER(ota_component,
                          "/" GOLIOTH_OTA_COMPONENT_PATH_PREFIX "*",
                          ota_receive_component_start,
                          ota_receive_component_data);
-GOLIOTH_UPLINK_HANDLER(ota_status, ota_uplink);
+POUCH_UPLINK_HANDLER(ota_uplink);

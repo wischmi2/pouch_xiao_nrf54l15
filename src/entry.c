@@ -8,14 +8,14 @@
 #include "block.h"
 #include "uplink.h"
 
+#include <errno.h>
 #include <string.h>
 #include <stdio.h>
 
-#include <zephyr/sys/byteorder.h>
 #include <pouch/downlink.h>
+#include <pouch/port.h>
 
-#include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(entry, CONFIG_POUCH_LOG_LEVEL);
+POUCH_LOG_REGISTER(entry, CONFIG_POUCH_COMMON_LOG_LEVEL);
 
 #define ENTRY_HEADER_OVERHEAD 5
 
@@ -28,7 +28,7 @@ struct pouch_entry
 };
 
 static struct pouch_buf *block;
-static K_MUTEX_DEFINE(mut);
+static POUCH_MUTEX_DEFINE(mut);
 
 /* Entry format:
  *
@@ -61,11 +61,11 @@ static const char *entry_content_format_str(int content_format)
 
 static void downlink_start(unsigned int stream_id, const char *path, uint16_t content_type)
 {
-    LOG_DBG("Entry stream_id: %u", stream_id);
-    LOG_DBG("Entry path: %s", path);
-    LOG_DBG("Entry content_type: %u", content_type);
+    POUCH_LOG_DBG("Entry stream_id: %u", stream_id);
+    POUCH_LOG_DBG("Entry path: %s", path);
+    POUCH_LOG_DBG("Entry content_type: %u", content_type);
 
-    STRUCT_SECTION_FOREACH(pouch_downlink_handler, handler)
+    POUCH_STRUCT_SECTION_FOREACH(pouch_downlink_handler, handler)
     {
         handler->start_cb(stream_id, path, content_type);
     }
@@ -73,11 +73,11 @@ static void downlink_start(unsigned int stream_id, const char *path, uint16_t co
 
 static void downlink_data(unsigned int stream_id, const void *data, size_t len, bool is_last)
 {
-    LOG_DBG("Entry stream_id: %u", stream_id);
-    LOG_DBG("Entry is_last: %d", (int) is_last);
-    LOG_HEXDUMP_DBG(data, len, "Entry data");
+    POUCH_LOG_DBG("Entry stream_id: %u", stream_id);
+    POUCH_LOG_DBG("Entry is_last: %d", (int) is_last);
+    POUCH_LOG_HEXDUMP(data, len, "Entry data");
 
-    STRUCT_SECTION_FOREACH(pouch_downlink_handler, handler)
+    POUCH_STRUCT_SECTION_FOREACH(pouch_downlink_handler, handler)
     {
         handler->data_cb(stream_id, data, len, is_last);
     }
@@ -98,11 +98,11 @@ static void pouch_downlink_entries_push(struct pouch_bufview *v)
         content_type = pouch_bufview_read_be16(v);
         path_len = pouch_bufview_read_byte(v);
 
-        LOG_DBG("data_len %u", (unsigned int) data_len);
-        LOG_DBG("content_type %s (%u)",
-                entry_content_format_str(content_type),
-                (unsigned int) content_type);
-        LOG_DBG("path_len %u", (unsigned int) path_len);
+        POUCH_LOG_DBG("data_len %u", (unsigned int) data_len);
+        POUCH_LOG_DBG("content_type %s (%u)",
+                      entry_content_format_str(content_type),
+                      (unsigned int) content_type);
+        POUCH_LOG_DBG("path_len %u", (unsigned int) path_len);
 
         path = pouch_bufview_read(v, path_len);
         data = pouch_bufview_read(v, data_len);
@@ -111,7 +111,7 @@ static void pouch_downlink_entries_push(struct pouch_bufview *v)
         memcpy(path_null_term, path, path_len);
         path_null_term[path_len] = '\0';
 
-        downlink_start(0, path_null_term, content_type);
+        downlink_start(0, (char *) path_null_term, content_type);
         downlink_data(0, data, data_len, true);
     }
 }
@@ -134,8 +134,10 @@ static void pouch_downlink_stream_push(struct pouch_bufview *v,
         content_type = pouch_bufview_read_be16(v);
         path_len = pouch_bufview_read_byte(v);
 
-        LOG_DBG("content_type %s (%d)", entry_content_format_str(content_type), (int) content_type);
-        LOG_DBG("path_len %zu", path_len);
+        POUCH_LOG_DBG("content_type %s (%d)",
+                      entry_content_format_str(content_type),
+                      (int) content_type);
+        POUCH_LOG_DBG("path_len %zu", path_len);
 
         path = pouch_bufview_read(v, path_len);
 
@@ -143,7 +145,7 @@ static void pouch_downlink_stream_push(struct pouch_bufview *v,
         memcpy(path_null_term, path, path_len);
         path_null_term[path_len] = '\0';
 
-        downlink_start(stream_id, path_null_term, content_type);
+        downlink_start(stream_id, (char *) path_null_term, content_type);
     }
 
     data_len = pouch_bufview_available(v);
@@ -164,7 +166,7 @@ void pouch_downlink_block_push(struct pouch_buf *pouch_buf)
     bool is_last;
     block_decode_hdr(&v, &block_size, &stream_id, &is_stream, &is_first, &is_last);
 
-    LOG_HEXDUMP_DBG(pouch_bufview_read(&v, 0), pouch_bufview_available(&v), "block bufview");
+    POUCH_LOG_HEXDUMP(pouch_bufview_read(&v, 0), pouch_bufview_available(&v), "block bufview");
 
     if (is_stream)
     {
@@ -179,15 +181,15 @@ void pouch_downlink_block_push(struct pouch_buf *pouch_buf)
 static int write_entry(struct pouch_buf *block, const struct pouch_entry *entry)
 {
     size_t pathlen = strlen(entry->path);
-    if (block_space_get(block) < ENTRY_HEADER_OVERHEAD + pathlen + entry->data_len)
+    if (block == NULL || block_space_get(block) < ENTRY_HEADER_OVERHEAD + pathlen + entry->data_len)
     {
         return -ENOMEM;
     }
 
-    sys_put_be16(entry->data_len, buf_claim(block, sizeof(uint16_t)));
-    sys_put_be16(entry->content_type, buf_claim(block, sizeof(uint16_t)));
+    pouch_put_be16(entry->data_len, buf_claim(block, sizeof(uint16_t)));
+    pouch_put_be16(entry->content_type, buf_claim(block, sizeof(uint16_t)));
     *buf_claim(block, 1) = pathlen;
-    buf_write(block, entry->path, pathlen);
+    buf_write(block, (uint8_t *) entry->path, pathlen);
     buf_write(block, entry->data, entry->data_len);
 
     return 0;
@@ -197,29 +199,22 @@ int pouch_uplink_entry_write(const char *path,
                              uint16_t content_type,
                              const void *data,
                              size_t len,
-                             k_timeout_t timeout)
+                             pouch_timeout_t timeout)
 {
     if (path == NULL || data == NULL || len == 0)
     {
         return -EINVAL;
     }
 
-    bool block_is_new = false;
-    int err = k_mutex_lock(&mut, timeout);
-    if (err)
-    {
-        return err;
-    }
+    /* We're using the timeout for successive blocking calls, so we have to
+     * use timepoints to move it along:
+     */
+    pouch_timepoint_t end = pouch_timepoint_get(timeout);
 
-    if (block == NULL)
+    bool ok = pouch_mutex_lock(&mut, pouch_timepoint_timeout(end));
+    if (!ok)
     {
-        block_is_new = true;
-        block = block_alloc();
-        if (block == NULL)
-        {
-            err = -ENOMEM;
-            goto end;
-        }
+        return -EAGAIN;
     }
 
     const struct pouch_entry entry = {
@@ -229,15 +224,18 @@ int pouch_uplink_entry_write(const char *path,
         .data = data,
     };
 
-    err = write_entry(block, &entry);
-    if (err && !block_is_new)
+    int err = write_entry(block, &entry);
+    if (err)
     {
-        // block is full
-        block_finish(block);
-        uplink_enqueue(block);
+        if (block != NULL)
+        {
+            // block is full
+            block_finish(block);
+            uplink_enqueue(block);
+        }
 
-        // try again with a new block:
-        block = block_alloc();
+        // allocate a new block:
+        block = block_alloc(pouch_timepoint_timeout(end));
         if (block == NULL)
         {
             err = -ENOMEM;
@@ -248,25 +246,32 @@ int pouch_uplink_entry_write(const char *path,
     }
 
 end:
-    k_mutex_unlock(&mut);
+    pouch_mutex_unlock(&mut);
     return err;
 }
 
-int entry_block_close(k_timeout_t timeout)
+int entry_block_close(pouch_timeout_t timeout)
 {
-    int err = k_mutex_lock(&mut, timeout);
-    if (err)
+    bool unlocked = pouch_mutex_lock(&mut, timeout);
+    if (false == unlocked)
     {
-        return err;
+        return -EAGAIN;
     }
 
-    if (block && block_size_get(block) > 0)
+    if (block)
     {
-        block_finish(block);
-        uplink_enqueue(block);
+        if (block_size_get(block) > 0)
+        {
+            block_finish(block);
+            uplink_enqueue(block);
+        }
+        else
+        {
+            block_free(block);
+        }
         block = NULL;
     }
 
-    k_mutex_unlock(&mut);
+    pouch_mutex_unlock(&mut);
     return 0;
 }

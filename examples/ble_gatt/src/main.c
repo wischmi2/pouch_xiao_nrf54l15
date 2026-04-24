@@ -8,114 +8,45 @@
 LOG_MODULE_REGISTER(main);
 
 #include "credentials.h"
+#include "ble_peripheral.h"
 
-#include <zephyr/bluetooth/bluetooth.h>
-#include <zephyr/bluetooth/conn.h>
 #include <zephyr/drivers/gpio.h>
 
 #include <pouch/pouch.h>
 #include <pouch/events.h>
 #include <pouch/uplink.h>
 #include <pouch/downlink.h>
-#include <pouch/transport/ble_gatt/peripheral.h>
-#include <pouch/transport/ble_gatt/common/types.h>
+#include <pouch/transport/gatt/common/types.h>
 
-#include <golioth/golioth.h>
-#include <golioth/settings_callbacks.h>
+#include <pouch/golioth/settings_callbacks.h>
 
 #include <app_version.h>
 
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET_OR(DT_ALIAS(led0), gpios, {});
+static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET_OR(DT_ALIAS(sw0), gpios, {});
+static struct gpio_callback button_cb_data;
 
-static struct
+/**
+ * Push timeseries application data to the cloud on every uplink
+ */
+static void do_uplink(void)
 {
-    uint8_t uuid[16];
-    struct golioth_ble_gatt_adv_data data;
-} __packed service_data = {
-    .uuid = {GOLIOTH_BLE_GATT_UUID_SVC_VAL},
-    .data =
-        {
-            .version = (POUCH_VERSION << GOLIOTH_BLE_GATT_ADV_VERSION_POUCH_SHIFT)
-                | (GOLIOTH_BLE_GATT_VERSION << GOLIOTH_BLE_GATT_ADV_VERSION_SELF_SHIFT),
-            .flags = 0x0,
-        },
-};
-
-static struct bt_data ad[] = {
-    BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-    BT_DATA(BT_DATA_NAME_COMPLETE, CONFIG_BT_DEVICE_NAME, sizeof(CONFIG_BT_DEVICE_NAME) - 1),
-};
-
-static struct bt_data sd[] = {
-    BT_DATA(BT_DATA_SVC_DATA128, &service_data, sizeof(service_data)),
-};
-
-static void connected(struct bt_conn *conn, uint8_t err)
-{
-    if (err)
-    {
-        LOG_DBG("Connection failed (err 0x%02x)", err);
-    }
-    else
-    {
-        LOG_DBG("Connected");
-    }
+    const char *data = "{\"temp\":22}";
+    pouch_uplink_entry_write(".s/sensor",
+                             POUCH_CONTENT_TYPE_JSON,
+                             data,
+                             strlen(data),
+                             POUCH_FOREVER);
 }
 
-void disconnect_work_handler(struct k_work *work)
-{
-    int err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_2, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
-    if (err)
-    {
-        LOG_ERR("Advertising failed to start (err %d)", err);
-    }
-}
+POUCH_UPLINK_HANDLER(do_uplink);
 
-K_WORK_DELAYABLE_DEFINE(disconnect_work, disconnect_work_handler);
-
-static void disconnected(struct bt_conn *conn, uint8_t reason)
-{
-    LOG_DBG("Disconnected (reason 0x%02x)", reason);
-
-    k_work_schedule(&disconnect_work, K_SECONDS(1));
-}
-
-BT_CONN_CB_DEFINE(conn_callbacks) = {
-    .connected = connected,
-    .disconnected = disconnected,
-};
-
-void sync_request_work_handler(struct k_work *work)
-{
-    service_data.data.flags = 0x01;
-    bt_le_adv_update_data(ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
-}
-
-K_WORK_DELAYABLE_DEFINE(sync_request_work, sync_request_work_handler);
-
-static void pouch_event_handler(enum pouch_event event, void *ctx)
-{
-    if (POUCH_EVENT_SESSION_START == event)
-    {
-        pouch_uplink_entry_write(".s/sensor",
-                                 POUCH_CONTENT_TYPE_JSON,
-                                 "{\"temp\":22}",
-                                 sizeof("{\"temp\":22}") - 1,
-                                 K_FOREVER);
-
-        golioth_sync_to_cloud();
-    }
-
-    if (POUCH_EVENT_SESSION_END == event)
-    {
-        service_data.data.flags = 0x00;
-        bt_le_adv_update_data(ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
-        k_work_schedule(&sync_request_work, K_SECONDS(CONFIG_EXAMPLE_SYNC_PERIOD_S));
-    }
-}
-
-POUCH_EVENT_HANDLER(pouch_event_handler, NULL);
-
+/**
+ * Settings handler for the "LED" setting.
+ *
+ * The settings handler gets called when the Settings service
+ * receives a new value for the registered setting.
+ */
 static int led_setting_cb(bool new_value)
 {
     LOG_INF("Received LED setting: %d", (int) new_value);
@@ -130,42 +61,27 @@ static int led_setting_cb(bool new_value)
 
 GOLIOTH_SETTINGS_HANDLER(LED, led_setting_cb);
 
-int main(void)
+/**
+ * Setup pouch stack.
+ *
+ * Loads credentials and initializes pouch.
+ */
+static int setup_pouch(void)
 {
-    LOG_INF("Pouch SDK Version: " STRINGIFY(APP_BUILD_VERSION));
-    LOG_INF("Pouch Protocol Version: %d", POUCH_VERSION);
-    LOG_INF("Pouch BLE Transport Protocol Version: %d", GOLIOTH_BLE_GATT_VERSION);
-
-    int err = golioth_ble_gatt_peripheral_init();
-    if (err)
-    {
-        LOG_ERR("Failed to initialize Pouch BLE GATT peripheral (err %d)", err);
-        return 0;
-    }
-
-    err = bt_enable(NULL);
-    if (err)
-    {
-        LOG_ERR("Bluetooth init failed (err %d)", err);
-        return 0;
-    }
-
-    LOG_INF("Bluetooth initialized");
-
     struct pouch_config config = {0};
 
-    err = load_certificate(&config.certificate);
+    int err = load_certificate(&config.certificate);
     if (err)
     {
         LOG_ERR("Failed to load certificate (err %d)", err);
-        return 0;
+        return err;
     }
 
     config.private_key = load_private_key();
     if (config.private_key == PSA_KEY_ID_NULL)
     {
         LOG_ERR("Failed to load private key");
-        return 0;
+        return -ENOENT;
     }
 
     LOG_INF("Credentials loaded");
@@ -174,34 +90,108 @@ int main(void)
     if (err)
     {
         LOG_ERR("Pouch init failed (err %d)", err);
-        return 0;
+        return err;
     }
 
     LOG_INF("Pouch initialized");
+    return 0;
+}
 
-    err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_2, ad, ARRAY_SIZE(ad), NULL, 0);
+/**
+ * Initialize LED.
+ *
+ * If the LED can't be initialized, we'll log it, but not crash out.
+ * The example can still work without it.
+ */
+static void setup_led(void)
+{
+    if (!DT_HAS_ALIAS(led0))
+    {
+        return;
+    }
+
+    int err = gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
+    if (err < 0)
+    {
+        LOG_WRN("Could not initialize LED");
+    }
+}
+
+/**
+ * Button handler for the Bluetooth OOB authentication mechanism.
+ */
+static void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+{
+    ble_peripheral_button_handler();
+}
+
+/**
+ * Initialize button.
+ *
+ * If the button can't be initialized, we'll log it, but not crash out.
+ * The example can still work without it.
+ */
+static void setup_button(void)
+{
+    if (!DT_HAS_ALIAS(sw0))
+    {
+        return;
+    }
+
+    LOG_INF("Set up button at %s pin %d", button.port->name, button.pin);
+
+    int err = gpio_pin_configure_dt(&button, GPIO_INPUT);
+    if (err < 0)
+    {
+        LOG_WRN("Could not initialize Button");
+        return;
+    }
+
+    err = gpio_pin_interrupt_configure_dt(&button, GPIO_INT_EDGE_TO_ACTIVE);
     if (err)
     {
-        LOG_ERR("Advertising failed to start (err %d)", err);
-        return 0;
+        LOG_WRN("Error %d: failed to configure interrupt on %s pin %d",
+                err,
+                button.port->name,
+                button.pin);
+        return;
+    }
+
+    gpio_init_callback(&button_cb_data, button_pressed, BIT(button.pin));
+    gpio_add_callback(button.port, &button_cb_data);
+}
+
+int main(void)
+{
+    LOG_INF("Pouch SDK Version: " STRINGIFY(APP_BUILD_VERSION));
+    LOG_INF("Pouch Protocol Version: %d", POUCH_VERSION);
+    LOG_INF("Pouch BLE Transport Protocol Version: %d", POUCH_GATT_VERSION);
+
+    int err = ble_peripheral_init();
+    if (err)
+    {
+        return err;
+    }
+
+    err = setup_pouch();
+    if (err)
+    {
+        return err;
+    }
+
+    setup_led();
+    setup_button();
+
+    err = ble_peripheral_start();
+    if (err)
+    {
+        return err;
     }
 
     LOG_INF("Advertising started");
 
-    if (DT_HAS_ALIAS(led0))
-    {
-        err = gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
-        if (err < 0)
-        {
-            LOG_ERR("Could not initialize LED");
-        }
-    }
+    // Request a gateway right away:
+    ble_peripheral_request_gateway(true);
 
-    k_work_schedule(&sync_request_work, K_SECONDS(CONFIG_EXAMPLE_SYNC_PERIOD_S));
-
-    while (1)
-    {
-        k_sleep(K_SECONDS(1));
-    }
     return 0;
 }

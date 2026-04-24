@@ -6,11 +6,12 @@
 
 #pragma once
 
-#include <zephyr/kernel.h>
-
+#include <pouch/port.h>
 
 /** Initial state of the buffer */
 #define POUCH_BUF_STATE_INITIAL ((pouch_buf_state_t) 0)
+/** Size of overhead required by pouch buffers, in addition to the usable memory area */
+#define POUCH_BUF_OVERHEAD (sizeof(pouch_slist_node_t) + sizeof(size_t))
 
 /** Single pouch buffer */
 struct pouch_buf;
@@ -26,7 +27,7 @@ struct pouch_bufview
 typedef size_t pouch_buf_state_t;
 
 /** Buffer queue */
-typedef sys_slist_t pouch_buf_queue_t;
+typedef pouch_slist_t pouch_buf_queue_t;
 
 struct pouch_buf *buf_alloc(size_t size);
 

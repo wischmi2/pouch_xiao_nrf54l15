@@ -1,0 +1,64 @@
+name: Twister Tests
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  twister:
+    container: golioth/golioth-zephyr-base:0.17.0-SDK-v0
+    strategy:
+      matrix:
+        manifest_yml:
+          - west-zephyr
+          - west-ncs
+      fail-fast: false
+    env:
+      ZEPHYR_SDK_INSTALL_DIR: /opt/toolchains/zephyr-sdk-0.17.0
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          path: pouch
+
+      - name: Init and update west
+        run: |
+          west init -l pouch --mf ${{ matrix.manifest_yml }}.yml
+          west update --narrow -o=--depth=1
+
+      - name: Install pip packages
+        run: |
+          uv pip install \
+            -r zephyr/scripts/requirements-base.txt        \
+            -r zephyr/scripts/requirements-build-test.txt  \
+            -r zephyr/scripts/requirements-run-test.txt         \
+            -r pouch/requirements.txt
+
+          uv pip install          \
+            cryptography==41.0.7  \
+            pyasn1                \
+            pyyaml                \
+            cbor>=1.0.0           \
+            imgtool>=1.9.0        \
+            jinja2                \
+            click
+
+      - name: Run tests
+        env:
+          ZEPHYR_BASE: ${{ github.workspace }}/zephyr
+          EXTRA_ZEPHYR_MODULES: ${{ github.workspace }}/pouch
+        run: ./zephyr/scripts/twister -v -T pouch/tests
+
+      - name: Collect JUnit Test Report
+        if: success() || failure()
+        run: |
+          cp twister-out/twister_suite_report.xml \
+             twister-out/integration-${{ matrix.manifest_yml }}.xml
+
+      - name: Upload CI report summary
+        uses: actions/upload-artifact@v7
+        if: success() || failure()
+        with:
+          name: ci-summary-integration-${{ matrix.manifest_yml }}
+          path: twister-out/integration-${{ matrix.manifest_yml }}.xml

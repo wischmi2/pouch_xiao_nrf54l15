@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <zephyr/kernel.h>
+#include <pouch/port.h>
 
 /**
  * @file uplink.h
@@ -18,6 +18,24 @@
 
 struct pouch_stream;
 
+/** Pouch uplink handler function */
+typedef void (*pouch_uplink_handler_t)(void);
+
+/**
+ * Register a handler for pouch uplink.
+ *
+ * Allows the application to register a callback that gets called when the pouch
+ * uplink is started.
+ *
+ * The pouch uplink will be closed once all uplink handlers have been called,
+ * and all streams are closed.
+ */
+#define POUCH_UPLINK_HANDLER(handler)                                  \
+    static const POUCH_TYPE_SECTION_ITERABLE(pouch_uplink_handler_t,   \
+                                             (pouch_uplink_##handler), \
+                                             pouch_uplink_handler,     \
+                                             handlers) = handler
+
 /**
  * Write an entry to the pouch uplink.
  *
@@ -28,7 +46,7 @@ struct pouch_stream;
  * @param content_type The content type of the entry.
  * @param data The data to write.
  * @param len The length of the data.
- * @param timeout The timeout for the operation.
+ * @param timeout The timeout for the operation in milliseconds.
  *
  * @return 0 on success or a negative error code on failure.
  */
@@ -36,14 +54,16 @@ int pouch_uplink_entry_write(const char *path,
                              uint16_t content_type,
                              const void *data,
                              size_t len,
-                             k_timeout_t timeout);
+                             pouch_timeout_t timeout);
 
 /**
  * Close the current uplink session by finalizing the open pouch.
  *
+ * @param timeout Timeout in milliseconds
+ *
  * @return 0 on success or a negative error code on failure.
  */
-int pouch_uplink_close(k_timeout_t timeout);
+int pouch_uplink_close(pouch_timeout_t timeout);
 
 /**
  * Open a new stream to the uplink.
@@ -56,10 +76,13 @@ int pouch_uplink_close(k_timeout_t timeout);
  *
  * @param path The path to write the entry to.
  * @param content_type The content type of the entry.
+ * @param timeout The timeout for opening the stream.
  *
  * @return A stream handle or NULL on error.
  */
-struct pouch_stream *pouch_uplink_stream_open(const char *path, uint16_t content_type);
+struct pouch_stream *pouch_uplink_stream_open(const char *path,
+                                              uint16_t content_type,
+                                              pouch_timeout_t timeout);
 
 /**
  * Write data to a stream.
@@ -78,25 +101,26 @@ struct pouch_stream *pouch_uplink_stream_open(const char *path, uint16_t content
  * @param stream The stream to write to.
  * @param data The data to write.
  * @param len The length of the data.
- * @param timeout The timeout for the write operation. If the timeout is reached before the write
- * operation completes, the function will return the number of bytes written before the timeout.
+ * @param timeout The timeout for the write operation in milliseconds. If the timeout is reached
+ * before the write operation completes, the function will return the number of bytes written before
+ * the timeout.
  *
  * @return The number of bytes written.
  */
 size_t pouch_stream_write(struct pouch_stream *stream,
                           const void *data,
                           size_t len,
-                          k_timeout_t timeout);
+                          pouch_timeout_t timeout);
 
 /**
  * Close a stream.
  *
  * @param stream The stream to close.
- * @param timeout The timeout for the close operation.
+ * @param timeout The timeout for the close operation in milliseconds.
  *
  * @return 0 on success or a negative error code on failure.
  */
-int pouch_stream_close(struct pouch_stream *stream, k_timeout_t timeout);
+int pouch_stream_close(struct pouch_stream *stream, pouch_timeout_t timeout);
 
 /**
  * Check if a stream is valid.

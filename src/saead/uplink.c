@@ -8,13 +8,12 @@
 #include "session.h"
 #include "../cert.h"
 #include "../block.h"
+#include <errno.h>
 #include <stdint.h>
 #include <psa/crypto.h>
-#include <zephyr/sys/byteorder.h>
-#include <mbedtls/base64.h>
+#include <pouch/port.h>
 
-#include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(saead_uplink, CONFIG_POUCH_LOG_LEVEL);
+POUCH_LOG_REGISTER(saead_uplink, CONFIG_POUCH_COMMON_LOG_LEVEL);
 
 static struct session uplink;
 
@@ -22,7 +21,7 @@ int saead_uplink_session_start(psa_algorithm_t algorithm, psa_key_id_t private_k
 {
     struct pubkey pubkey;
 
-    uplink.flags = ATOMIC_INIT(0);
+    uplink.flags = POUCH_ATOMIC_INIT(0);
 
     // Sequential IDs require replay protection, which isn't supported yet:
     uplink.id.type = SESSION_ID_TYPE_RANDOM;
@@ -30,7 +29,7 @@ int saead_uplink_session_start(psa_algorithm_t algorithm, psa_key_id_t private_k
     int err = session_id_generate(&uplink.id);
     if (err)
     {
-        LOG_ERR("Session ID generation failed (err: %d)", err);
+        POUCH_LOG_ERR("Session ID generation failed (err: %d)", err);
         return err;
     }
 
@@ -42,16 +41,16 @@ int saead_uplink_session_start(psa_algorithm_t algorithm, psa_key_id_t private_k
                                       private_key,
                                       &pubkey,
                                       PSA_KEY_USAGE_ENCRYPT);
-    if (err)
+    if (PSA_KEY_ID_NULL == uplink.key)
     {
-        LOG_ERR("Session key generation failed (err: %d)", err);
-        return err;
+        POUCH_LOG_ERR("Session key generation failed");
+        return -ENOENT;
     }
 
     uplink.algorithm = algorithm;
     uplink.pouch.id = 0;
-    atomic_set_bit(&uplink.flags, SESSION_VALID);
-    atomic_set_bit(&uplink.flags, SESSION_ACTIVE);
+    pouch_atomic_set_bit(&uplink.flags, SESSION_VALID);
+    pouch_atomic_set_bit(&uplink.flags, SESSION_ACTIVE);
 
     return 0;
 }
@@ -63,9 +62,9 @@ int saead_uplink_pouch_start(void)
 
 int saead_uplink_header_get(struct saead_info *info)
 {
-    if (!atomic_test_bit(&uplink.flags, SESSION_ACTIVE))
+    if (!pouch_atomic_test_bit(&uplink.flags, SESSION_ACTIVE))
     {
-        LOG_ERR("Not in a session");
+        POUCH_LOG_ERR("Not in a session");
         return -ENOTCONN;
     }
 
@@ -105,16 +104,16 @@ int saead_uplink_header_get(struct saead_info *info)
 
 struct pouch_buf *saead_uplink_encrypt_block(struct pouch_buf *block)
 {
-    if (!atomic_test_bit(&uplink.flags, SESSION_ACTIVE))
+    if (!pouch_atomic_test_bit(&uplink.flags, SESSION_ACTIVE))
     {
-        LOG_WRN("Not in a session");
-        buf_free(block);
+        POUCH_LOG_WRN("Not in a session");
+        block_free(block);
         return NULL;
     }
 
     struct pouch_buf *encrypted = session_encrypt_block(&uplink, block);
 
-    buf_free(block);
+    block_free(block);
 
     return encrypted;
 }
@@ -128,14 +127,15 @@ bool saead_uplink_session_matches(const struct session_id *id,
                                   uint8_t max_block_size_log,
                                   psa_algorithm_t algorithm)
 {
-    return atomic_test_bit(&uplink.flags, SESSION_VALID) && session_id_is_equal(id, &uplink.id)
-        && max_block_size_log == MAX_BLOCK_PAYLOAD_SIZE_LOG && uplink.algorithm == algorithm;
+    return pouch_atomic_test_bit(&uplink.flags, SESSION_VALID)
+        && session_id_is_equal(id, &uplink.id) && max_block_size_log == MAX_BLOCK_PAYLOAD_SIZE_LOG
+        && uplink.algorithm == algorithm;
 }
 
 psa_key_id_t saead_uplink_session_key_copy(psa_key_usage_t usage)
 {
     psa_key_id_t copy = PSA_KEY_ID_NULL;
-    if (!atomic_test_bit(&uplink.flags, SESSION_VALID))
+    if (!pouch_atomic_test_bit(&uplink.flags, SESSION_VALID))
     {
         return PSA_KEY_ID_NULL;
     }

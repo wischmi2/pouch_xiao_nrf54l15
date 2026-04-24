@@ -9,25 +9,24 @@
 #include "crypto.h"
 
 #include <pouch/events.h>
+#include <pouch/port.h>
+#include <pouch/uplink.h>
 
-#include <zephyr/kernel.h>
-#include <zephyr/sys/iterable_sections.h>
-#include <zephyr/sys/ring_buffer.h>
+POUCH_THREAD_STACK_DEFINE(pouch_stack, CONFIG_POUCH_THREAD_STACK_SIZE);
 
-K_THREAD_STACK_DEFINE(pouch_stack, CONFIG_POUCH_THREAD_STACK_SIZE);
+static pouch_work_q_t pouch_work_q;
+static pouch_work_t event_work;
 
-static struct k_work_q pouch_work_q;
-static struct k_work event_work;
+uint8_t pouch_event_q_buf[sizeof(enum pouch_event) * CONFIG_POUCH_EVENT_QUEUE_DEPTH];
+pouch_msgq_t pouch_event_q;
 
-K_MSGQ_DEFINE(pouch_event_q, sizeof(enum pouch_event), CONFIG_POUCH_EVENT_QUEUE_DEPTH, 1);
-
-static void dispatch_events(struct k_work *work)
+static void dispatch_events(pouch_work_t *work)
 {
     enum pouch_event event;
 
-    while (0 == k_msgq_get(&pouch_event_q, &event, K_NO_WAIT))
+    while (0 == pouch_msgq_get(&pouch_event_q, &event, POUCH_NO_WAIT))
     {
-        STRUCT_SECTION_FOREACH(pouch_event_handler, handler)
+        POUCH_STRUCT_SECTION_FOREACH(pouch_event_handler, handler)
         {
             handler->callback(event, handler->ctx);
         }
@@ -36,30 +35,38 @@ static void dispatch_events(struct k_work *work)
 
 void pouch_event_emit(enum pouch_event event)
 {
-    k_msgq_put(&pouch_event_q, &event, K_NO_WAIT);
+    pouch_msgq_put(&pouch_event_q, &event, POUCH_NO_WAIT);
 
-    k_work_submit_to_queue(&pouch_work_q, &event_work);
+    pouch_work_submit_to_queue(&pouch_work_q, &event_work);
 }
 
-static int pouch_module_init(void)
+static void pouch_module_init(void)
 {
-    k_work_queue_init(&pouch_work_q);
+    pouch_work_queue_init(&pouch_work_q);
 
-    k_work_queue_start(&pouch_work_q,
-                       pouch_stack,
-                       K_THREAD_STACK_SIZEOF(pouch_stack),
-                       CONFIG_POUCH_THREAD_PRIORITY,
-                       NULL);
+    pouch_work_queue_start(&pouch_work_q,
+                           pouch_stack,
+                           CONFIG_POUCH_THREAD_STACK_SIZE,
+                           CONFIG_POUCH_THREAD_PRIORITY,
+                           "pouch_work");
 
-    k_work_init(&event_work, dispatch_events);
-
-    return 0;
+    pouch_work_init(&event_work, dispatch_events);
 }
-SYS_INIT(pouch_module_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
+POUCH_APPLICATION_STARTUP_HOOK(pouch_module_init);
 
 int pouch_init(const struct pouch_config *config)
 {
-    downlink_init(&pouch_work_q);
+    pouch_msgq_init(&pouch_event_q,
+                    pouch_event_q_buf,
+                    sizeof(pouch_event_q_buf),
+                    sizeof(enum pouch_event));
+
+    int err = downlink_init(&pouch_work_q);
+    if (err)
+    {
+        return err;
+    }
+
     uplink_init();
 
     return crypto_init(config);

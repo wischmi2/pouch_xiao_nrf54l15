@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <zephyr/kernel.h>
+#include <pouch/port.h>
 
 /** Initialize the pouch downlink handler */
-void downlink_init(struct k_work_q *pouch_work_queue);
+int downlink_init(pouch_work_q_t *pouch_work_queue);

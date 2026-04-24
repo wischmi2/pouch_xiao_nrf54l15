@@ -5,101 +5,98 @@
  */
 
 #include <stdlib.h>
-#include <zephyr/sys/byteorder.h>
 
+#include <errno.h>
 #include <pouch/downlink.h>
+#include <pouch/port.h>
 #include <pouch/types.h>
 #include <pouch/transport/downlink.h>
 #include "cddl/header_decode.h"
 
 #include "block.h"
+#include <pouch/blockbuf.h>
+#include "buf.h"
 #include "crypto.h"
 #include "downlink.h"
 #include "entry.h"
 
-#include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(downlink, CONFIG_POUCH_LOG_LEVEL);
+POUCH_LOG_REGISTER(downlink, CONFIG_POUCH_COMMON_LOG_LEVEL);
 
-static struct pouch_buf *pouch_buf;
+static struct pouch_buf *encrypted;
 static bool pouch_header;
 
 static struct
 {
     pouch_buf_queue_t queue;
-    struct k_work work;
+    pouch_work_t work;
+    pouch_work_q_t *work_queue;
 } decrypt;
 
-static struct
-{
-    pouch_buf_queue_t buf_queue;
-    struct k_work_q *work_queue;
-    struct k_work work;
-} consume;
+static void decrypt_blocks(pouch_work_t *work);
 
-static void decrypt_blocks(struct k_work *work);
-static void consume_blocks(struct k_work *work);
-
-void downlink_init(struct k_work_q *pouch_work_queue)
+int downlink_init(pouch_work_q_t *pouch_work_queue)
 {
     buf_queue_init(&decrypt.queue);
-    k_work_init(&decrypt.work, decrypt_blocks);
+    pouch_work_init(&decrypt.work, decrypt_blocks);
+    decrypt.work_queue = pouch_work_queue;
 
-    buf_queue_init(&consume.buf_queue);
-    consume.work_queue = pouch_work_queue;
-    k_work_init(&consume.work, consume_blocks);
+    return 0;
 }
 
-static void consume_blocks(struct k_work *work)
+static void decrypt_blocks(pouch_work_t *work)
 {
-    struct pouch_buf *pouch_buf = buf_queue_get(&consume.buf_queue);
-    if (!pouch_buf)
+    struct pouch_buf *encrypted_block;
+    struct pouch_buf *decrypted_block = blockbuf_alloc(POUCH_FOREVER);
+    if (decrypted_block == NULL)
     {
+        POUCH_LOG_ERR("Failed to allocate decrypt block");
         return;
     }
 
-    pouch_downlink_block_push(pouch_buf);
-
-    buf_free(pouch_buf);
-
-    if (!buf_queue_is_empty(&consume.buf_queue))
+    while ((encrypted_block = buf_queue_get(&decrypt.queue)) != NULL)
     {
-        k_work_submit_to_queue(consume.work_queue, work);
+        // Reset the target buffer
+        buf_restore(decrypted_block, POUCH_BUF_STATE_INITIAL);
+
+        /* Decrypt this block */
+        int err = crypto_decrypt_block(encrypted_block, decrypted_block);
+
+        /* Encrypted block was consumed; free buffer no matter the outcome */
+        /* buffers were allocated then enqueued in pouch_downlink_push() */
+        buf_free(encrypted_block);
+
+        /* Test to see if decrypt buffer contains valid data */
+        if (err)
+        {
+            POUCH_LOG_ERR("Failed to decrypt block: %d", err);
+            // TODO: Abort the downlink
+            break;
+        }
+
+        pouch_downlink_block_push(decrypted_block);
+
+        pouch_yield();  // let other threads run
     }
+
+    blockbuf_free(decrypted_block);
 }
 
-static void decrypt_blocks(struct k_work *work)
-{
-    struct pouch_buf *decrypted = crypto_decrypt_block(buf_queue_get(&decrypt.queue));
-    if (!decrypted)
-    {
-        return;
-    }
-
-    buf_queue_submit(&consume.buf_queue, decrypted);
-    k_work_submit_to_queue(consume.work_queue, &consume.work);
-
-    if (!buf_queue_is_empty(&decrypt.queue))
-    {
-        k_work_submit(work);
-    }
-}
-
-static void block_downlink_push(struct pouch_buf *pouch_buf)
+static int block_downlink_push(struct pouch_buf *pouch_buf)
 {
     buf_queue_submit(&decrypt.queue, pouch_buf);
-    k_work_submit(&decrypt.work);
+    return pouch_work_submit_to_queue(decrypt.work_queue, &decrypt.work);
 }
 
 void pouch_downlink_start(void)
 {
-    LOG_DBG("Pouch downlink start");
+    POUCH_LOG_DBG("Pouch downlink start");
 
     pouch_header = false;
 
-    pouch_buf = buf_alloc(MAX_CIPHERTEXT_BLOCK_SIZE);
-    if (!pouch_buf)
+    encrypted = buf_alloc(MAX_CIPHERTEXT_BLOCK_SIZE);
+    if (!encrypted)
     {
-        LOG_ERR("Failed to allocate pouch buf");
+        POUCH_LOG_ERR("Failed to allocate pouch buf");
         return;
     }
 }
@@ -113,57 +110,58 @@ static int pouch_downlink_parse_header(struct pouch_bufview *v, size_t *header_l
     ret = cbor_decode_pouch_header(header_raw, pouch_bufview_available(v), &header, header_len);
     if (ret != ZCBOR_SUCCESS)
     {
-        LOG_DBG("Failed to decode pouch header: %d", ret);
+        POUCH_LOG_DBG("Failed to decode pouch header: %d", ret);
         return -EIO;
     }
 
-    LOG_HEXDUMP_DBG(header_raw, *header_len, "pouch header raw");
+    POUCH_LOG_HEXDUMP(header_raw, *header_len, "pouch header raw");
 
-    LOG_DBG("Header version %d", (int) header.version);
-    LOG_DBG("Encryption type %s",
-            (int) header.encryption_info_m.Union_choice == encryption_info_union_plaintext_info_m_c
-                ? "Plaintext"
-                : "SAEAD");
-    LOG_DBG("Payload len %d", (int) *header_len);
+    POUCH_LOG_DBG("Header version %d", (int) header.version);
+    POUCH_LOG_DBG("Encryption type %s",
+                  (int) header.encryption_info_m.Union_choice
+                          == encryption_info_union_plaintext_info_m_c
+                      ? "Plaintext"
+                      : "SAEAD");
+    POUCH_LOG_DBG("Payload len %d", (int) *header_len);
 
     int err = crypto_downlink_start(&header.encryption_info_m);
     if (err)
     {
-        LOG_ERR("Invalid header: %d", err);
+        POUCH_LOG_ERR("Invalid header: %d", err);
         return err;
     }
 
     return 0;
 }
 
-void pouch_downlink_push(const void *buf, size_t buf_len)
+int pouch_downlink_push(const void *buf, size_t buf_len)
 {
     const uint8_t *buf_p = buf;
 
-    LOG_HEXDUMP_DBG(buf, buf_len, "Pouch downlink push: ");
+    POUCH_LOG_HEXDUMP(buf, buf_len, "Pouch downlink push: ");
 
     while (buf_len)
     {
-        if (!pouch_buf)
+        if (!encrypted)
         {
-            LOG_WRN("No pouch_buf allocated");
-            return;
+            POUCH_LOG_WRN("No pouch_buf allocated");
+            return -ENOMEM;
         }
 
-        if (buf_size_get(pouch_buf) >= MAX_CIPHERTEXT_BLOCK_SIZE)
+        if (buf_size_get(encrypted) >= MAX_CIPHERTEXT_BLOCK_SIZE)
         {
-            LOG_ERR("No more space for pouch header");
-            return;
+            POUCH_LOG_ERR("No more space for pouch header");
+            return -ENOMEM;
         }
 
-        size_t buf_written = MIN(buf_len, MAX_CIPHERTEXT_BLOCK_SIZE - buf_size_get(pouch_buf));
-        buf_write(pouch_buf, buf_p, buf_written);
+        size_t buf_written = MIN(buf_len, MAX_CIPHERTEXT_BLOCK_SIZE - buf_size_get(encrypted));
+        buf_write(encrypted, buf_p, buf_written);
 
         buf_p += buf_written;
         buf_len -= buf_written;
 
         struct pouch_bufview v;
-        pouch_bufview_init(&v, pouch_buf);
+        pouch_bufview_init(&v, encrypted);
 
         if (!pouch_header)
         {
@@ -171,15 +169,18 @@ void pouch_downlink_push(const void *buf, size_t buf_len)
             int err = pouch_downlink_parse_header(&v, &header_len);
             if (err)
             {
-                return;
+                /* Match previous behavior but needs more differentiation. Future work tracked here:
+                 * https://github.com/golioth/firmware-issue-tracker/issues/924
+                 */
+                return 0;
             }
 
             pouch_header = true;
 
-            /* Align first block with pouch_buf start */
-            buf_trim_start(pouch_buf, header_len);
+            /* Align first block with encrypted start */
+            buf_trim_start(encrypted, header_len);
 
-            LOG_HEXDUMP_DBG(pouch_bufview_read(&v, 0), pouch_bufview_available(&v), "remaining");
+            POUCH_LOG_HEXDUMP(pouch_bufview_read(&v, 0), pouch_bufview_available(&v), "remaining");
         }
 
         if (pouch_bufview_available(&v) > sizeof(uint16_t))
@@ -188,42 +189,55 @@ void pouch_downlink_push(const void *buf, size_t buf_len)
 
             if (block_size > MAX_BLOCK_SIZE_FIELD_VALUE)
             {
-                LOG_ERR("Block size %u is bigger than supported %u",
-                        (unsigned int) block_size,
-                        (unsigned int) (MAX_BLOCK_SIZE_FIELD_VALUE));
-                return;
+                POUCH_LOG_ERR("Block size %u is bigger than supported %u",
+                              (unsigned int) block_size,
+                              (unsigned int) (MAX_BLOCK_SIZE_FIELD_VALUE));
+                return -ENOMEM;
             }
 
             if (pouch_bufview_available(&v) >= block_size)
             {
-                LOG_DBG("Block ready %d available %d",
-                        (int) block_size,
-                        (int) pouch_bufview_available(&v));
+                POUCH_LOG_DBG("Block ready %d available %d",
+                              (int) block_size,
+                              (int) pouch_bufview_available(&v));
 
-                struct pouch_buf *pouch_buf_to_send = pouch_buf;
+                struct pouch_buf *encrypted_block = encrypted;
 
-                pouch_buf = buf_alloc(MAX_CIPHERTEXT_BLOCK_SIZE);
-                if (!pouch_buf)
+                encrypted = buf_alloc(MAX_CIPHERTEXT_BLOCK_SIZE);
+                if (!encrypted)
                 {
-                    LOG_ERR("Failed to allocate pouch buf");
+                    POUCH_LOG_ERR("Failed to allocate pouch buf");
+                    return -ENOMEM;
                 }
 
-                if (pouch_buf && pouch_bufview_available(&v) > block_size)
+                if (pouch_bufview_available(&v) > block_size)
                 {
                     const uint8_t *remaining = pouch_bufview_read(&v, 0);
                     remaining += block_size;
                     size_t remaining_len = pouch_bufview_available(&v) - block_size;
 
-                    LOG_HEXDUMP_DBG(remaining, remaining_len, "remaining");
+                    POUCH_LOG_HEXDUMP(remaining, remaining_len, "remaining");
 
-                    buf_write(pouch_buf, remaining, remaining_len);
-                    buf_trim_end(pouch_buf_to_send, remaining_len);
+                    buf_write(encrypted, remaining, remaining_len);
+                    buf_trim_end(encrypted_block, remaining_len);
                 }
 
-                block_downlink_push(pouch_buf_to_send);
+                /* buffers pushed to queue are freed in decrypt_blocks(). */
+                int err = block_downlink_push(encrypted_block);
+                if (0 > err)
+                {
+                    POUCH_LOG_ERR("Failed to enqueue block: %d", err);
+                    return err;
+                }
             }
         }
     }
+
+    return 0;
 }
 
-void pouch_downlink_finish(void) {}
+void pouch_downlink_finish(void)
+{
+    buf_free(encrypted);
+    encrypted = NULL;
+}

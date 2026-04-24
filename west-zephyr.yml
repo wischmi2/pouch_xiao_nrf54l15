@@ -1,0 +1,39 @@
+# Copyright (c) 2025 Golioth, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+manifest:
+  version: 0.8
+  group-filter: [+babblesim]
+
+  projects:
+    - name: zephyr
+      revision: v4.3.0
+      url: https://github.com/zephyrproject-rtos/zephyr
+      west-commands: scripts/west-commands.yml
+      import:
+        name-allowlist:
+          - zephyr
+          - cmsis_6
+          - hal_nordic
+          - hal_nxp
+          - mbedtls
+          - mcuboot
+          - nrf_hw_models
+          - picolibc
+          - segger
+          - tfm-mcuboot
+          - trusted-firmware-m
+          - littlefs
+          - zcbor
+        path-allowlist:
+          - "tools/bsim"
+          - "tools/bsim/*"
+          - "tools/bsim/*/*"
+
+    - name: golioth
+      path: modules/lib/golioth-firmware-sdk
+      revision: d703b1f8805c7584a44dabc31bdf09164637d888
+      url: https://github.com/golioth/golioth-firmware-sdk.git
+
+  self:
+    path: pouch

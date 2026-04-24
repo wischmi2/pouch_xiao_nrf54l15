@@ -1,0 +1,67 @@
+name: Build Examples
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  build:
+    container: golioth/golioth-zephyr-base:0.17.0-SDK-v0
+    strategy:
+      matrix:
+        include:
+          - manifest: west-zephyr.yml
+            example: ble_gatt
+            board: nrf52840dk/nrf52840
+          - manifest: west-ncs.yml
+            example: ble_gatt
+            board: nrf52840dk/nrf52840
+          - manifest: west-zephyr.yml
+            example: http_client
+            board: frdm_rw612
+          - manifest: west-zephyr.yml
+            example: http_client
+            board: native_sim
+            no_sysbuild: true
+      fail-fast: false
+    env:
+      ZEPHYR_SDK_INSTALL_DIR: /opt/toolchains/zephyr-sdk-0.17.0
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          path: pouch
+
+      - name: Init and update west
+        run: |
+          west init -l pouch --mf ${{ matrix.manifest }}
+          west update --narrow -o=--depth=1
+
+      - name: Install pip packages
+        run: |
+          uv pip install \
+            -r zephyr/scripts/requirements-base.txt        \
+            -r zephyr/scripts/requirements-build-test.txt  \
+            -r zephyr/scripts/requirements-run-test.txt         \
+            -r pouch/requirements.txt
+
+          uv pip install          \
+            cryptography==41.0.7  \
+            pyasn1                \
+            pyyaml                \
+            cbor>=1.0.0           \
+            imgtool>=1.9.0        \
+            jinja2                \
+            click
+
+      - name: Compile
+        shell: bash
+        run: |
+          if [[ "${{ matrix.no_sysbuild }}" == "true" ]]; then
+            SYSBUILD_FLAG=""
+          else
+            SYSBUILD_FLAG="--sysbuild"
+          fi
+
+          west build ${SYSBUILD_FLAG} -p -b ${{ matrix.board }} pouch/examples/${{ matrix.example }}

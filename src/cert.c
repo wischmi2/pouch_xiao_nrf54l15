@@ -5,18 +5,20 @@
  */
 
 #include "cert.h"
+#include <errno.h>
 #include <psa/crypto.h>
-#include <zephyr/kernel.h>
+#include <pouch/port.h>
 #include <pouch/transport/certificate.h>
+#include <string.h>
 
-#include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(cert, CONFIG_POUCH_LOG_LEVEL);
+POUCH_LOG_REGISTER(cert, CONFIG_POUCH_COMMON_LOG_LEVEL);
 
-static const uint8_t raw_ca_cert[] = {
 #if IS_ENABLED(CONFIG_POUCH_VALIDATE_SERVER_CERT)
-#include "golioth_ca_cert.inc"
+#include <pouch/pouch_ca_cert.h>
+#else
+static const struct pouch_cert empty_cert = {.buffer = NULL, .size = 0};
+static const struct pouch_cert *pouch_ca_cert = &empty_cert;
 #endif
-};
 
 static struct
 {
@@ -50,7 +52,7 @@ static int parse_x509_cert(const struct pouch_cert *cert, mbedtls_x509_crt *out)
     int ret = mbedtls_x509_crt_parse(out, cert->buffer, cert->size);
     if (ret != 0)
     {
-        LOG_ERR("Failed to parse certificate: 0x%x", -ret);
+        POUCH_LOG_ERR("Failed to parse certificate: 0x%x", -ret);
         return -EIO;
     }
 
@@ -68,12 +70,7 @@ static mbedtls_x509_crt *load_ca_cert(void)
         return &ca_cert;
     }
 
-    const struct pouch_cert ca_cert_data = {
-        .buffer = raw_ca_cert,
-        .size = sizeof(raw_ca_cert),
-    };
-
-    int err = parse_x509_cert(&ca_cert_data, &ca_cert);
+    int err = parse_x509_cert(pouch_ca_cert, &ca_cert);
     if (err)
     {
         return NULL;
@@ -106,7 +103,7 @@ static int authenticate_server_cert(mbedtls_x509_crt *cert)
     mbedtls_x509_crt *ca_cert = load_ca_cert();
     if (ca_cert == NULL)
     {
-        LOG_ERR("Failed loading server CA cert");
+        POUCH_LOG_ERR("Failed loading server CA cert");
         return -EIO;
     }
 
@@ -120,7 +117,9 @@ static int authenticate_server_cert(mbedtls_x509_crt *cert)
                                       NULL);
     if (ret != 0)
     {
-        LOG_ERR("Failed verifying server cert: 0x%x, %x", -ret, flags);
+        POUCH_LOG_ERR("Failed verifying server cert: 0x%" PRIx32 ", %" PRIx32,
+                      (uint32_t) -ret,
+                      flags);
         return -EPERM;
     }
 
@@ -132,7 +131,7 @@ static int extract_pubkey(mbedtls_x509_crt *cert, struct pubkey *out)
     mbedtls_ecp_keypair *key = mbedtls_pk_ec(cert->pk);
     if (key == NULL)
     {
-        LOG_ERR("Extract PK: Invalid key type");
+        POUCH_LOG_ERR("Extract PK: Invalid key type");
         return -EIO;
     }
 
@@ -143,7 +142,7 @@ static int extract_pubkey(mbedtls_x509_crt *cert, struct pubkey *out)
                                            sizeof(out->data));
     if (err)
     {
-        LOG_ERR("Extract PK: write error 0x%x", -err);
+        POUCH_LOG_ERR("Extract PK: write error 0x%x", -err);
         return -EIO;
     }
 
@@ -181,7 +180,7 @@ int cert_server_set(const struct pouch_cert *certbuf)
     err = parse_x509_cert(certbuf, &cert_chain);
     if (err)
     {
-        LOG_ERR("Failed loading server cert");
+        POUCH_LOG_ERR("Failed loading server cert");
         goto exit;
     }
 
@@ -196,7 +195,8 @@ int cert_server_set(const struct pouch_cert *certbuf)
 
     if (cert_chain.serial.len > sizeof(server_cert.serial.data))
     {
-        LOG_ERR("Unexpected server certificate serial number size: %u", cert_chain.serial.len);
+        POUCH_LOG_ERR("Unexpected server certificate serial number size: %u",
+                      cert_chain.serial.len);
         goto exit;
     }
 
@@ -209,7 +209,7 @@ int cert_server_set(const struct pouch_cert *certbuf)
     memcpy(server_cert.serial.data, cert_chain.serial.p, cert_chain.serial.len);
     server_cert.serial.len = cert_chain.serial.len;
 
-    LOG_DBG("Server key stored");
+    POUCH_LOG_DBG("Server key stored");
 
 exit:
     mbedtls_x509_crt_free(&cert_chain);

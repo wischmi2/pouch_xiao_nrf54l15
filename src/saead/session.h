@@ -7,8 +7,6 @@
 #pragma once
 
 #include "../pouch.h"
-#include <zephyr/kernel.h>
-#include <zephyr/sys/atomic.h>
 #include <psa/crypto.h>
 #include <string.h>
 
@@ -56,7 +54,7 @@ enum session_flags
 struct session
 {
     struct session_id id;
-    atomic_t flags;
+    pouch_atomic_t flags;
     psa_algorithm_t algorithm;
     psa_key_id_t key;
     struct
@@ -89,8 +87,26 @@ void session_end(struct session *session);
 
 int session_pouch_start(struct session *session, pouch_id_t pouch_id);
 
+/** Allocate a block buffer
+ *
+ * @return pointer to newly created buffer
+ * @return NULL on failure
+ */
+struct pouch_buf *session_block_buf_alloc(void);
+
 /** Encrypt the next block in the given session */
 struct pouch_buf *session_encrypt_block(struct session *session, struct pouch_buf *block);
 
-/** Decrypt the next block in the given session */
-struct pouch_buf *session_decrypt_block(struct session *session, struct pouch_buf *block);
+/**
+ * Decrypt the next block in the given session
+ *
+ * @session session struct used as context across multiple blocks
+ * @param block buffer where encrypted input is located
+ * @param decrypted buffer where decrypted data will be written. Only valid when return code is 0.
+ *
+ * @return 0 if successful
+ * @return negative error code on failure
+ */
+int session_decrypt_block(struct session *session,
+                          const struct pouch_buf *block,
+                          struct pouch_buf *decrypted);

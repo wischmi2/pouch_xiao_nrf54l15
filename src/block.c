@@ -5,9 +5,10 @@
  */
 
 #include "block.h"
+#include <pouch/blockbuf.h>
 #include <stdlib.h>
 #include <string.h>
-#include <zephyr/sys/byteorder.h>
+#include <pouch/port.h>
 
 /* Block format:
  *
@@ -54,13 +55,13 @@ void block_decode_hdr(struct pouch_bufview *v,
 
 static void update_block_header(struct pouch_buf *block, size_t size, uint8_t flags)
 {
-    sys_put_be16(size, buf_claim(block, sizeof(uint16_t)));
+    pouch_put_be16(size, buf_claim(block, sizeof(uint16_t)));
     *buf_claim(block, 1) |= flags;
 }
 
 static void write_block_header(struct pouch_buf *block, size_t size, uint8_t id, uint8_t flags)
 {
-    sys_put_be16(size, buf_claim(block, sizeof(uint16_t)));
+    pouch_put_be16(size, buf_claim(block, sizeof(uint16_t)));
     *buf_claim(block, 1) = id | flags;
 }
 
@@ -76,12 +77,12 @@ size_t block_size_get(const struct pouch_buf *block)
 
 void block_size_write(struct pouch_buf *block, uint16_t size)
 {
-    sys_put_be16(size, buf_claim(block, sizeof(uint16_t)));
+    pouch_put_be16(size, buf_claim(block, sizeof(uint16_t)));
 }
 
-struct pouch_buf *block_alloc(void)
+struct pouch_buf *block_alloc(pouch_timeout_t timeout)
 {
-    struct pouch_buf *block = buf_alloc(MAX_PLAINTEXT_BLOCK_SIZE);
+    struct pouch_buf *block = blockbuf_alloc(timeout);
     if (block != NULL)
     {
         write_block_header(block, 0, BLOCK_ID_ENTRY, FIRST_DATA_MASK | LAST_DATA_MASK);
@@ -90,9 +91,9 @@ struct pouch_buf *block_alloc(void)
     return block;
 }
 
-struct pouch_buf *block_alloc_stream(uint8_t stream_id, bool first)
+struct pouch_buf *block_alloc_stream(uint8_t stream_id, bool first, pouch_timeout_t timeout)
 {
-    struct pouch_buf *block = buf_alloc(MAX_PLAINTEXT_BLOCK_SIZE);
+    struct pouch_buf *block = blockbuf_alloc(timeout);
     if (block != NULL)
     {
         write_block_header(block, 0, stream_id, first ? FIRST_DATA_MASK : 0);
@@ -103,7 +104,7 @@ struct pouch_buf *block_alloc_stream(uint8_t stream_id, bool first)
 
 void block_free(struct pouch_buf *block)
 {
-    buf_free(block);
+    blockbuf_free(block);
 }
 
 static void finish(struct pouch_buf *block, uint8_t id, uint8_t flags)

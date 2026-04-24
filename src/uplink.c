@@ -7,16 +7,16 @@
 #include "pouch.h"
 #include "header.h"
 #include "entry.h"
+#include "stream.h"
 #include "crypto.h"
 
+#include <errno.h>
 #include <pouch/uplink.h>
 #include <pouch/events.h>
+#include <pouch/port.h>
 #include <pouch/transport/uplink.h>
 
 #include <stdlib.h>
-#include <zephyr/init.h>
-#include <zephyr/sys/iterable_sections.h>
-#include <zephyr/sys/ring_buffer.h>
 
 enum flags
 {
@@ -25,18 +25,21 @@ enum flags
     POUCH_CLOSED,
 };
 
+POUCH_THREAD_STACK_DEFINE(uplink_processing_stack, CONFIG_POUCH_UPLINK_PROCESSING_STACK_SIZE);
+
 struct pouch_uplink
 {
     struct pouch_buf *header;
-    atomic_t flags;
-    atomic_t id;
+    pouch_atomic_t flags[1];
+    pouch_atomic_t id;
     int error;
 
     struct
     {
         /** Blocks that are ready for processing */
         pouch_buf_queue_t queue;
-        struct k_work work;
+        pouch_work_q_t work_queue;
+        pouch_work_t work;
     } processing;
     struct
     {
@@ -52,20 +55,20 @@ static struct pouch_uplink uplink;
 
 static bool session_is_active(void)
 {
-    return atomic_get(&uplink.flags) & BIT(SESSION_ACTIVE);
+    return pouch_atomic_test_bit(uplink.flags, SESSION_ACTIVE);
 }
 
 static bool pouch_is_open(void)
 {
-    return !(atomic_get(&uplink.flags) & BIT(POUCH_CLOSED));
+    return !pouch_atomic_test_bit(uplink.flags, POUCH_CLOSED);
 }
 
 static bool pouch_is_closing(void)
 {
-    return (atomic_get(&uplink.flags) & BIT(POUCH_CLOSING));
+    return pouch_atomic_test_bit(uplink.flags, POUCH_CLOSING);
 }
 
-static void process_blocks(struct k_work *work)
+static void process_blocks(pouch_work_t *work)
 {
     while (session_is_active() && pouch_is_open() && !buf_queue_is_empty(&uplink.processing.queue))
     {
@@ -84,35 +87,35 @@ static void process_blocks(struct k_work *work)
         buf_queue_submit(&uplink.transport.queue, encrypted);
     }
 
-    if (pouch_is_closing())
+    if (pouch_is_closing() && !stream_is_open())
     {
-        atomic_set_bit(&uplink.flags, POUCH_CLOSED);
+        pouch_atomic_set_bit(uplink.flags, POUCH_CLOSED);
     }
 }
 
 static void end_session(void)
 {
     crypto_session_end();
-    atomic_clear_bit(&uplink.flags, SESSION_ACTIVE);
+    pouch_atomic_clear_bit(uplink.flags, SESSION_ACTIVE);
     pouch_event_emit(POUCH_EVENT_SESSION_END);
 }
 
 void uplink_enqueue(struct pouch_buf *block)
 {
     buf_queue_submit(&uplink.processing.queue, block);
-    k_work_submit(&uplink.processing.work);
+    pouch_work_submit_to_queue(&uplink.processing.work_queue, &uplink.processing.work);
 }
 
-int pouch_uplink_close(k_timeout_t timeout)
+int pouch_uplink_close(pouch_timeout_t timeout)
 {
-    if (atomic_test_and_set_bit(&uplink.flags, POUCH_CLOSING))
+    if (pouch_atomic_test_and_set_bit(uplink.flags, POUCH_CLOSING))
     {
         return -EALREADY;
     }
 
     int err = entry_block_close(timeout);
 
-    k_work_submit(&uplink.processing.work);
+    pouch_work_submit_to_queue(&uplink.processing.work_queue, &uplink.processing.work);
 
     return err;
 }
@@ -121,13 +124,41 @@ void uplink_init(void)
 {
     buf_queue_init(&uplink.processing.queue);
     buf_queue_init(&uplink.transport.queue);
-    k_work_init(&uplink.processing.work, process_blocks);
+    pouch_work_init(&uplink.processing.work, process_blocks);
+
+    pouch_work_queue_init(&uplink.processing.work_queue);
+    pouch_work_queue_start(&uplink.processing.work_queue,
+                           uplink_processing_stack,
+                           CONFIG_POUCH_UPLINK_PROCESSING_STACK_SIZE,
+                           CONFIG_POUCH_UPLINK_PROCESSING_PRIORITY,
+                           "uplink_workq");
 }
 
 uint32_t uplink_session_id(void)
 {
-    return atomic_get(&uplink.id);
+    return pouch_atomic_get_value(&uplink.id);
 }
+
+// emit uplink calls in event handler to ensure that they run in the pouch processing thread.
+static void event_handler(enum pouch_event evt, void *ctx)
+{
+    if (evt != POUCH_EVENT_SESSION_START)
+    {
+        return;
+    }
+
+    POUCH_TYPE_SECTION_FOREACH(pouch_uplink_handler_t, pouch_uplink_handler, handler)
+    {
+        if (handler != NULL)
+        {
+            (*handler)();
+        }
+    }
+
+    pouch_uplink_close(POUCH_FOREVER);
+}
+
+POUCH_EVENT_HANDLER(event_handler, NULL);
 
 // Transport API:
 
@@ -135,7 +166,7 @@ struct pouch_uplink *pouch_uplink_start(void)
 {
     int err;
 
-    if (atomic_test_and_set_bit(&uplink.flags, SESSION_ACTIVE))
+    if (pouch_atomic_test_and_set_bit(uplink.flags, SESSION_ACTIVE))
     {
         return NULL;
     }
@@ -143,14 +174,14 @@ struct pouch_uplink *pouch_uplink_start(void)
     err = crypto_session_start();
     if (err)
     {
-        atomic_clear_bit(&uplink.flags, SESSION_ACTIVE);
+        pouch_atomic_clear_bit(uplink.flags, SESSION_ACTIVE);
         return NULL;
     }
 
     err = crypto_pouch_start();
     if (err)
     {
-        atomic_clear_bit(&uplink.flags, SESSION_ACTIVE);
+        pouch_atomic_clear_bit(uplink.flags, SESSION_ACTIVE);
         return NULL;
     }
 
@@ -158,7 +189,7 @@ struct pouch_uplink *pouch_uplink_start(void)
     uplink.header = pouch_header_create();
     if (!uplink.header)
     {
-        atomic_clear_bit(&uplink.flags, SESSION_ACTIVE);
+        pouch_atomic_clear_bit(uplink.flags, SESSION_ACTIVE);
         return NULL;
     }
 
@@ -167,7 +198,7 @@ struct pouch_uplink *pouch_uplink_start(void)
     // Process any pending blocks:
     if (!buf_queue_is_empty(&uplink.processing.queue))
     {
-        k_work_submit(&uplink.processing.work);
+        pouch_work_submit_to_queue(&uplink.processing.work_queue, &uplink.processing.work);
     }
 
     return &uplink;
@@ -237,8 +268,8 @@ void pouch_uplink_finish(struct pouch_uplink *uplink)
         uplink->header = NULL;
     }
 
-    atomic_inc(&uplink->id);
-    if (atomic_clear(&uplink->flags) & BIT(SESSION_ACTIVE))
+    pouch_atomic_inc(&uplink->id);
+    if (pouch_atomic_clear(uplink->flags) & BIT(SESSION_ACTIVE))
     {
         /* The transport didn't pull down all the data, so
          * we didn't emit the end event, and need to do it

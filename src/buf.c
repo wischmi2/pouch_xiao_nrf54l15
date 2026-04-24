@@ -7,18 +7,21 @@
 #include "buf.h"
 #include <stdlib.h>
 #include <string.h>
-#include <zephyr/sys/byteorder.h>
+#include <pouch/port.h>
 
-static atomic_t bufs;
+static pouch_atomic_t bufs;
 
 struct pouch_buf
 {
-    sys_snode_t node;
+    pouch_slist_node_t node;
     /** Number of bytes in the buffer */
     size_t bytes;
     /** Data */
     uint8_t buf[];
 };
+
+POUCH_STATIC_ASSERT(sizeof(struct pouch_buf) == POUCH_BUF_OVERHEAD,
+                    "Invalid overhead in pouch buf");
 
 void buf_write(struct pouch_buf *buf, const uint8_t *data, size_t len)
 {
@@ -67,8 +70,9 @@ struct pouch_buf *buf_alloc(size_t size)
     struct pouch_buf *buf = malloc(sizeof(struct pouch_buf) + size);
     if (buf != NULL)
     {
-        atomic_inc(&bufs);
+        pouch_atomic_inc(&bufs);
         buf->bytes = 0;
+        pouch_slist_node_init(&buf->node);
     }
 
     return buf;
@@ -79,13 +83,13 @@ void buf_free(struct pouch_buf *buf)
     free(buf);
     if (buf)
     {
-        atomic_dec(&bufs);
+        pouch_atomic_dec(&bufs);
     }
 }
 
 int buf_active_count(void)
 {
-    return atomic_get(&bufs);
+    return pouch_atomic_get_value(&bufs);
 }
 
 size_t buf_trim_start(struct pouch_buf *buf, size_t bytes)
@@ -105,23 +109,23 @@ size_t buf_trim_end(struct pouch_buf *buf, size_t bytes)
 
 void buf_queue_init(pouch_buf_queue_t *queue)
 {
-    sys_slist_init(queue);
+    pouch_slist_init(queue);
 }
 
 void buf_queue_submit(pouch_buf_queue_t *queue, struct pouch_buf *buf)
 {
-    sys_slist_append(queue, &buf->node);
+    pouch_slist_append(queue, &buf->node);
 }
 
 struct pouch_buf *buf_queue_get(pouch_buf_queue_t *queue)
 {
-    sys_snode_t *n = sys_slist_get(queue);
+    pouch_slist_node_t *n = pouch_slist_get(queue);
     return n ? CONTAINER_OF(n, struct pouch_buf, node) : NULL;
 }
 
 struct pouch_buf *buf_queue_peek(pouch_buf_queue_t *queue)
 {
-    sys_snode_t *n = sys_slist_peek_head(queue);
+    pouch_slist_node_t *n = pouch_slist_peek_head(queue);
     return n ? CONTAINER_OF(n, struct pouch_buf, node) : NULL;
 }
 
@@ -157,17 +161,17 @@ uint8_t pouch_bufview_read_byte(struct pouch_bufview *v)
 
 uint16_t pouch_bufview_read_be16(struct pouch_bufview *v)
 {
-    return sys_get_be16(bufview_read(v, sizeof(uint16_t)));
+    return pouch_get_be16(bufview_read(v, sizeof(uint16_t)));
 }
 
 uint32_t pouch_bufview_read_be32(struct pouch_bufview *v)
 {
-    return sys_get_be32(bufview_read(v, sizeof(uint32_t)));
+    return pouch_get_be32(bufview_read(v, sizeof(uint32_t)));
 }
 
 uint64_t pouch_bufview_read_be64(struct pouch_bufview *v)
 {
-    return sys_get_be64(bufview_read(v, sizeof(uint64_t)));
+    return pouch_get_be64(bufview_read(v, sizeof(uint64_t)));
 }
 
 size_t pouch_bufview_available(const struct pouch_bufview *v)

@@ -6,8 +6,6 @@
 
 #pragma once
 
-#include <zephyr/kernel.h>
-#include <zephyr/sys/util.h>
 #include "buf.h"
 
 #define BLOCK_ID_MASK 0x1f
@@ -32,9 +30,9 @@ void block_decode_hdr(struct pouch_bufview *v,
                       bool *is_first,
                       bool *is_last);
 
-struct pouch_buf *block_alloc(void);
+struct pouch_buf *block_alloc(pouch_timeout_t timeout);
 
-struct pouch_buf *block_alloc_stream(uint8_t stream_id, bool first);
+struct pouch_buf *block_alloc_stream(uint8_t stream_id, bool first, pouch_timeout_t timeout);
 
 void block_free(struct pouch_buf *block);
 

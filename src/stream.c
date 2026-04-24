@@ -6,8 +6,9 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <zephyr/sys/byteorder.h>
 
+#include <errno.h>
+#include <pouch/port.h>
 #include <pouch/uplink.h>
 #include "buf.h"
 #include "block.h"
@@ -27,17 +28,17 @@ struct pouch_stream
 };
 
 /** Next stream ID */
-static atomic_t stream_id = ATOMIC_INIT(1);
+static pouch_atomic_t stream_id = POUCH_ATOMIC_INIT(1);
 /** Number of open streams */
-static atomic_t open_streams;
+static pouch_atomic_t open_streams;
 
 static void write_stream_header(struct pouch_buf *block, uint16_t content_type, const char *path)
 {
     size_t path_len = strlen(path);
 
-    sys_put_be16(content_type, buf_claim(block, sizeof(uint16_t)));
+    pouch_put_be16(content_type, buf_claim(block, sizeof(uint16_t)));
     *buf_claim(block, 1) = path_len;
-    buf_write(block, path, path_len);
+    buf_write(block, (uint8_t *) path, path_len);
 }
 
 static uint8_t new_stream_id(void)
@@ -46,24 +47,26 @@ static uint8_t new_stream_id(void)
     // ID 0 is reserved:
     do
     {
-        id = atomic_inc(&stream_id) & BLOCK_ID_MASK;
+        id = pouch_atomic_inc(&stream_id) & BLOCK_ID_MASK;
     } while (id == 0);
 
     return id;
 }
 
-struct pouch_stream *pouch_uplink_stream_open(const char *path, uint16_t content_type)
+struct pouch_stream *pouch_uplink_stream_open(const char *path,
+                                              uint16_t content_type,
+                                              pouch_timeout_t timeout)
 {
-    if (atomic_inc(&open_streams) >= POUCH_STREAMS_MAX)
+    if (pouch_atomic_inc(&open_streams) >= POUCH_STREAMS_MAX)
     {
-        atomic_dec(&open_streams);
+        pouch_atomic_dec(&open_streams);
         return NULL;
     }
 
     struct pouch_stream *stream = malloc(sizeof(struct pouch_stream));
     if (stream == NULL)
     {
-        atomic_dec(&open_streams);
+        pouch_atomic_dec(&open_streams);
         return NULL;
     }
 
@@ -71,11 +74,11 @@ struct pouch_stream *pouch_uplink_stream_open(const char *path, uint16_t content
     stream->bytes = 0;
     stream->session_id = uplink_session_id();
 
-    stream->buf = block_alloc_stream(stream->id, true);
+    stream->buf = block_alloc_stream(stream->id, true, timeout);
     if (stream->buf == NULL)
     {
         free(stream);
-        atomic_dec(&open_streams);
+        pouch_atomic_dec(&open_streams);
         return NULL;
     }
 
@@ -87,7 +90,7 @@ struct pouch_stream *pouch_uplink_stream_open(const char *path, uint16_t content
 size_t pouch_stream_write(struct pouch_stream *stream,
                           const void *data,
                           size_t len,
-                          k_timeout_t timeout)
+                          pouch_timeout_t timeout)
 {
     const uint8_t *bytes = data;
     size_t written = 0;
@@ -108,7 +111,7 @@ size_t pouch_stream_write(struct pouch_stream *stream,
              * stream as a result of this failed write instead of having to allocate an empty block
              * for this.
              */
-            struct pouch_buf *buf = block_alloc_stream(stream->id, false);
+            struct pouch_buf *buf = block_alloc_stream(stream->id, false, timeout);
             if (buf == NULL)
             {
                 break;
@@ -131,7 +134,7 @@ size_t pouch_stream_write(struct pouch_stream *stream,
     return written;
 }
 
-int pouch_stream_close(struct pouch_stream *stream, k_timeout_t timeout)
+int pouch_stream_close(struct pouch_stream *stream, pouch_timeout_t timeout)
 {
     if (stream == NULL)
     {
@@ -148,7 +151,7 @@ int pouch_stream_close(struct pouch_stream *stream, k_timeout_t timeout)
         block_free(stream->buf);
     }
 
-    atomic_dec(&open_streams);
+    pouch_atomic_dec(&open_streams);
     free(stream);
 
     return 0;
@@ -157,4 +160,9 @@ int pouch_stream_close(struct pouch_stream *stream, k_timeout_t timeout)
 bool pouch_stream_is_valid(struct pouch_stream *stream)
 {
     return (stream != NULL) && (stream->session_id == uplink_session_id());
+}
+
+bool stream_is_open(void)
+{
+    return pouch_atomic_get_value(&open_streams) != 0;
 }

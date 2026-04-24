@@ -4,17 +4,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <zephyr/logging/log.h>
-LOG_MODULE_DECLARE(glth_settings);
+#include <pouch/port.h>
+POUCH_LOG_REGISTER(settings_callbacks, CONFIG_GOLIOTH_LOG_LEVEL);
 
 #include <errno.h>
 #include <stddef.h>
-
 #include "settings.h"
 
 int golioth_settings_receive_one(const struct setting_value *value)
 {
-    STRUCT_SECTION_FOREACH(golioth_settings_handler, setting)
+    POUCH_STRUCT_SECTION_FOREACH(golioth_settings_handler, setting)
     {
         if (0 == strcmp(setting->key, value->key))
         {
@@ -38,7 +37,7 @@ int golioth_settings_receive_one(const struct setting_value *value)
                     return setting->string_cb(value->str_val.data, value->str_val.len);
 
                 default:
-                    LOG_ERR("Unknown settings type");
+                    POUCH_LOG_ERR("Unknown settings type");
                     break;
             }
         }
