@@ -10,6 +10,10 @@ LOG_MODULE_REGISTER(main);
 #include "credentials.h"
 #include "ble_peripheral.h"
 
+#include <stdbool.h>
+#include <stdio.h>
+#include <string.h>
+#include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/gpio.h>
 
 #include <pouch/pouch.h>
@@ -26,12 +30,107 @@ static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET_OR(DT_ALIAS(led0), gpios
 static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET_OR(DT_ALIAS(sw0), gpios, {});
 static struct gpio_callback button_cb_data;
 
+#define SOIL_SENSOR_NODE DT_PATH(zephyr_user)
+
+#if DT_NODE_HAS_PROP(SOIL_SENSOR_NODE, io_channels)
+static const struct adc_dt_spec soil_sensor_adc =
+    ADC_DT_SPEC_GET_BY_IDX(SOIL_SENSOR_NODE, 0);
+static bool soil_sensor_ready;
+
+static int setup_soil_sensor(void)
+{
+    if (!adc_is_ready_dt(&soil_sensor_adc))
+    {
+        LOG_WRN("Soil sensor ADC device is not ready");
+        return -ENODEV;
+    }
+
+    int err = adc_channel_setup_dt(&soil_sensor_adc);
+    if (err)
+    {
+        LOG_WRN("Could not configure soil sensor ADC channel (err %d)", err);
+        return err;
+    }
+
+    soil_sensor_ready = true;
+    LOG_INF("Soil sensor ADC channel configured");
+    return 0;
+}
+
+static int read_soil_sensor(int16_t *raw, int32_t *millivolts)
+{
+    if (!soil_sensor_ready)
+    {
+        return -ENODEV;
+    }
+
+    struct adc_sequence sequence;
+    int16_t sample;
+    int err = adc_sequence_init_dt(&soil_sensor_adc, &sequence);
+    if (err)
+    {
+        return err;
+    }
+
+    sequence.buffer = &sample;
+    sequence.buffer_size = sizeof(sample);
+
+    err = adc_read_dt(&soil_sensor_adc, &sequence);
+    if (err)
+    {
+        return err;
+    }
+
+    int32_t sample_mv = sample;
+    err = adc_raw_to_millivolts_dt(&soil_sensor_adc, &sample_mv);
+    if (err)
+    {
+        return err;
+    }
+
+    *raw = sample;
+    *millivolts = sample_mv;
+    return 0;
+}
+#else
+static int setup_soil_sensor(void)
+{
+    LOG_WRN("No soil sensor ADC channel configured");
+    return -ENODEV;
+}
+
+static int read_soil_sensor(int16_t *raw, int32_t *millivolts)
+{
+    ARG_UNUSED(raw);
+    ARG_UNUSED(millivolts);
+    return -ENODEV;
+}
+#endif
+
 /**
  * Push timeseries application data to the cloud on every uplink
  */
 static void do_uplink(void)
 {
-    const char *data = "{\"temp\":22}";
+    char data[96];
+    int16_t raw;
+    int32_t millivolts;
+    int err = read_soil_sensor(&raw, &millivolts);
+
+    if (err)
+    {
+        LOG_WRN("Soil sensor read failed (err %d)", err);
+        snprintf(data, sizeof(data), "{\"soil_sensor_error\":%d}", err);
+    }
+    else
+    {
+        snprintf(data,
+                 sizeof(data),
+                 "{\"soil_moisture_mv\":%d,\"soil_moisture_raw\":%d}",
+                 millivolts,
+                 raw);
+    }
+
     pouch_uplink_entry_write(".s/sensor",
                              POUCH_CONTENT_TYPE_JSON,
                              data,
@@ -181,6 +280,7 @@ int main(void)
 
     setup_led();
     setup_button();
+    setup_soil_sensor();
 
     err = ble_peripheral_start();
     if (err)
