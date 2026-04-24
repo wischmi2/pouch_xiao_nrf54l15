@@ -1,16 +1,18 @@
 param(
     [string]$WorkspaceRoot = "C:/ncs_pouch_soil",
     [string]$PouchRepoPath = "C:/ncs_pouch_soil/pouch",
-    [string]$Board = "nrf52840dk/nrf52840",
-    [switch]$SkipWestUpdate
+    [string]$Board = "xiao_nrf54l15/nrf54l15/cpuapp",
+    [switch]$SkipWestUpdate,
+    [switch]$UseSysbuild
 )
 
 $ErrorActionPreference = "Stop"
 
-Write-Host "== pouch v0.1.0 build helper =="
+Write-Host "== pouch XIAO nRF54L15 build helper =="
 Write-Host "WorkspaceRoot : $WorkspaceRoot"
 Write-Host "PouchRepoPath : $PouchRepoPath"
 Write-Host "Board         : $Board"
+Write-Host "Sysbuild      : $UseSysbuild"
 
 # Force the NCS-managed Zephyr SDK to avoid host SDK/toolchain mismatches.
 $env:ZEPHYR_SDK_INSTALL_DIR = "C:/ncs/toolchains/66cdf9b75e/opt/zephyr-sdk"
@@ -37,21 +39,29 @@ try {
         python -m pip install cryptography
 
         # Fail fast with a clear message if the board is unavailable.
+        $boardName = ($Board -split "/")[0]
         $boardCheck = west boards 2>&1
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to query west boards."
         }
-        if (-not ($boardCheck -match "(?m)^$([regex]::Escape($Board))$")) {
+        if (-not ($boardCheck -match "(?m)^$([regex]::Escape($boardName))$")) {
             Write-Error "Board '$Board' is not available in this workspace."
             Write-Host "Tip: run 'west boards | Select-String xiao' to see available xiao boards."
-            Write-Host "Known NCS nRF54 board available here: nrf54l15dk/nrf54l15/cpuapp"
+            Write-Host "This board requires an NCS/Zephyr release that includes xiao_nrf54l15, such as the v3.2.3 stack used by latest pouch."
             exit 1
         }
 
         Write-Host "== Building ble_gatt example =="
         Push-Location "examples/ble_gatt"
         try {
-            west build -b $Board --pristine
+            if ($UseSysbuild) {
+                Write-Host "== Using sysbuild/MCUboot =="
+                Write-Host "Note: xiao_nrf54l15 currently fails in MCUboot flash_map_extended.c without board-specific flash metadata."
+                west build -b $Board --pristine
+            } else {
+                Write-Host "== Using app-only build (--no-sysbuild) =="
+                west build -b $Board --pristine --no-sysbuild
+            }
         }
         finally {
             Pop-Location
