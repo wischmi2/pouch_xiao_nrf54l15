@@ -31,6 +31,10 @@ static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET_OR(DT_ALIAS(led0), gpios
 static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET_OR(DT_ALIAS(sw0), gpios, {});
 static struct gpio_callback button_cb_data;
 static bool led_ready;
+static struct k_work manual_uplink_work;
+static struct k_mutex manual_uplink_lock;
+static char manual_uplink_payload[96];
+static bool manual_uplink_pending;
 
 #define SOIL_SENSOR_NODE DT_PATH(zephyr_user)
 
@@ -123,11 +127,10 @@ static int read_soil_sensor(int16_t *raw, int32_t *millivolts)
 #endif
 
 /**
- * Push timeseries application data to the cloud on every uplink
+ * Build the JSON payload for one soil sensor reading.
  */
-static void do_uplink(void)
+static void build_soil_sensor_payload(char *data, size_t data_len)
 {
-    char data[96];
     int16_t raw;
     int32_t millivolts;
     int err = read_soil_sensor(&raw, &millivolts);
@@ -135,26 +138,65 @@ static void do_uplink(void)
     if (err)
     {
         LOG_WRN("Soil sensor read failed (err %d)", err);
-        snprintf(data, sizeof(data), "{\"soil_sensor_error\":%d}", err);
+        snprintf(data, data_len, "{\"soil_sensor_error\":%d}", err);
     }
     else
     {
         snprintf(data,
-                 sizeof(data),
+                 data_len,
                  "{\"soil_moisture_mv\":%d,\"soil_moisture_raw\":%d}",
                  millivolts,
                  raw);
     }
+}
+
+static void write_soil_sensor_uplink(const char *data)
+{
+    int err;
 
     LOG_INF("Writing soil sensor uplink: path .s/sensor, content_type %d, payload %s",
             POUCH_CONTENT_TYPE_JSON,
             data);
 
-    pouch_uplink_entry_write(".s/sensor",
-                             POUCH_CONTENT_TYPE_JSON,
-                             data,
-                             strlen(data),
-                             POUCH_FOREVER);
+    err = pouch_uplink_entry_write(".s/sensor",
+                                   POUCH_CONTENT_TYPE_JSON,
+                                   data,
+                                   strlen(data),
+                                   POUCH_FOREVER);
+    if (err)
+    {
+        LOG_WRN("Soil sensor uplink write failed (err %d)", err);
+    }
+}
+
+/**
+ * Push timeseries application data to the cloud on every uplink.
+ */
+static void do_uplink(void)
+{
+    char data[96];
+    bool use_manual_payload = false;
+
+    k_mutex_lock(&manual_uplink_lock, K_FOREVER);
+    if (manual_uplink_pending)
+    {
+        strncpy(data, manual_uplink_payload, sizeof(data));
+        data[sizeof(data) - 1] = '\0';
+        manual_uplink_pending = false;
+        use_manual_payload = true;
+    }
+    k_mutex_unlock(&manual_uplink_lock);
+
+    if (use_manual_payload)
+    {
+        LOG_INF("Sending button-triggered soil sensor reading");
+    }
+    else
+    {
+        build_soil_sensor_payload(data, sizeof(data));
+    }
+
+    write_soil_sensor_uplink(data);
 }
 
 POUCH_UPLINK_HANDLER(do_uplink);
@@ -258,12 +300,35 @@ static void blink_stage(uint8_t count)
     k_msleep(500);
 }
 
+static void manual_uplink_work_handler(struct k_work *work)
+{
+    char data[sizeof(manual_uplink_payload)];
+
+    ARG_UNUSED(work);
+
+    build_soil_sensor_payload(data, sizeof(data));
+
+    k_mutex_lock(&manual_uplink_lock, K_FOREVER);
+    strncpy(manual_uplink_payload, data, sizeof(manual_uplink_payload));
+    manual_uplink_payload[sizeof(manual_uplink_payload) - 1] = '\0';
+    manual_uplink_pending = true;
+    k_mutex_unlock(&manual_uplink_lock);
+
+    LOG_INF("Button-triggered soil sensor reading queued: %s", data);
+    ble_peripheral_request_gateway(true);
+}
+
 /**
- * Button handler for the Bluetooth OOB authentication mechanism.
+ * Button handler for Bluetooth OOB authentication and manual sensor uplinks.
  */
 static void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
+    ARG_UNUSED(dev);
+    ARG_UNUSED(cb);
+    ARG_UNUSED(pins);
+
     ble_peripheral_button_handler();
+    k_work_submit(&manual_uplink_work);
 }
 
 /**
@@ -307,6 +372,9 @@ int main(void)
     LOG_INF("Pouch SDK Version: " STRINGIFY(APP_BUILD_VERSION));
     LOG_INF("Pouch Protocol Version: %d", POUCH_VERSION);
     LOG_INF("Pouch BLE Transport Protocol Version: %d", POUCH_GATT_VERSION);
+
+    k_mutex_init(&manual_uplink_lock);
+    k_work_init(&manual_uplink_work, manual_uplink_work_handler);
 
     setup_led();
     blink_stage(1);
