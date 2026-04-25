@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <zephyr/bluetooth/addr.h>
+
 /**
  * Start Bluetooth scanning for devices.
  *
@@ -15,3 +17,17 @@
  * - sync request set in 'flags'
  */
 void pouch_gateway_scan_start(void);
+
+/**
+ * Temporarily skip reconnecting to a peer after a security failure.
+ *
+ * @param addr Peer Bluetooth address.
+ */
+void pouch_gateway_scan_peer_cooldown(const bt_addr_le_t *addr);
+
+/**
+ * Clear any active scan cooldown for a peer after a successful sync/security setup.
+ *
+ * @param addr Peer Bluetooth address.
+ */
+void pouch_gateway_scan_peer_cooldown_clear(const bt_addr_le_t *addr);

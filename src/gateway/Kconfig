@@ -90,6 +90,14 @@ config POUCH_GATEWAY_GATT_SCAN_FILTER_BONDED
       ignored when not bonded already. Bonding can be triggered
       explicitly by calling pouch_gateway_bonding_enable() API.
 
+config POUCH_GATEWAY_GATT_SECURITY_FAILURE_COOLDOWN_S
+    int "Security failure scan cooldown"
+    default 30
+    help
+      Number of seconds to skip reconnecting to a Pouch node after BLE
+      security or pairing fails. This prevents rapid reconnect loops from
+      repeatedly restarting SMP pairing with the same peer.
+
 module = POUCH_GATEWAY_GATT
 module-str = Pouch Gateway GATT Library
 source "subsys/logging/Kconfig.template.log_config"

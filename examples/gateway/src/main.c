@@ -171,6 +171,7 @@ static void bt_connected(struct bt_conn *conn, uint8_t err)
     {
         LOG_ERR("Failed to connect to %s %u %s", addr, err, bt_hci_err_to_str(err));
 
+        pouch_gateway_scan_peer_cooldown(bt_conn_get_dst(conn));
         bt_conn_unref(conn);
 
         pouch_gateway_scan_start();
@@ -185,6 +186,7 @@ static void bt_connected(struct bt_conn *conn, uint8_t err)
     {
         LOG_ERR("Failed to set security (%d).", err);
 
+        pouch_gateway_scan_peer_cooldown(bt_conn_get_dst(conn));
         bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
         return;
     }
@@ -222,6 +224,7 @@ static void security_changed(struct bt_conn *conn, bt_security_t level, enum bt_
         struct bt_conn_info info;
         bt_conn_get_info(conn, &info);
 
+        pouch_gateway_scan_peer_cooldown(info.le.dst);
         LOG_WRN("Removing stale bond for %s, id %u", addr, info.id);
         bt_unpair(info.id, info.le.dst);
         bt_conn_disconnect(conn, BT_HCI_ERR_INSUFFICIENT_SECURITY);
@@ -229,6 +232,7 @@ static void security_changed(struct bt_conn *conn, bt_security_t level, enum bt_
     else
     {
         LOG_INF("BT security changed for %s to level %u", addr, level);
+        pouch_gateway_scan_peer_cooldown_clear(bt_conn_get_dst(conn));
 
         pouch_gateway_bt_start(conn);
     }
@@ -306,6 +310,7 @@ static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason)
             bt_security_err_to_str(reason),
             reason);
 
+    pouch_gateway_scan_peer_cooldown(bt_conn_get_dst(conn));
     bt_conn_disconnect(conn,
                        (reason == BT_SECURITY_ERR_PAIR_NOT_ALLOWED) ? BT_HCI_ERR_PAIRING_NOT_ALLOWED
                                                                     : BT_HCI_ERR_AUTH_FAIL);
