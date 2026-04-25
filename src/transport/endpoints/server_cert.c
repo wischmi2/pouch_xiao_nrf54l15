@@ -9,9 +9,12 @@
 #include <string.h>
 
 #include <pouch/types.h>
+#include <pouch/port.h>
 #include <pouch/certificate.h>
 #include <pouch/transport/certificate.h>
 #include "endpoints.h"
+
+POUCH_LOG_REGISTER(server_cert_endpoint, CONFIG_POUCH_COMMON_LOG_LEVEL);
 
 static struct
 {
@@ -28,6 +31,8 @@ static int start(void)
     }
     cert.size = 0;
 
+    POUCH_LOG_INF("Starting server cert receive");
+
     return 0;
 }
 
@@ -36,6 +41,10 @@ static int recv(const void *buf, size_t len)
     if (cert.size + len > CONFIG_POUCH_SERVER_CERT_MAX_LEN)
     {
         // too large
+        POUCH_LOG_ERR("Server cert too large: have %zu, chunk %zu, max %d",
+                      cert.size,
+                      len,
+                      CONFIG_POUCH_SERVER_CERT_MAX_LEN);
         return -EINVAL;
     }
 
@@ -47,6 +56,8 @@ static int recv(const void *buf, size_t len)
 
 static void end(bool success)
 {
+    POUCH_LOG_INF("Finished server cert receive: success=%d, size=%zu", (int) success, cert.size);
+
     if (success)
     {
         struct pouch_cert server_cert = {

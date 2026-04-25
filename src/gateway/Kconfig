@@ -44,8 +44,12 @@ config POUCH_GATEWAY_CLOUD
     default y
 
 config POUCH_GATEWAY_SERVER_CERT_BUILTIN
-    bool
+    bool "Use the built-in Pouch server certificate"
     default y if !POUCH_GATEWAY_CLOUD
+    help
+        Use CONFIG_POUCH_GATEWAY_SERVER_CERT_PEM as the server certificate
+        sent to Pouch nodes. If disabled while cloud support is enabled, the
+        gateway downloads the server certificate from Golioth at runtime.
 
 config POUCH_GATT_INFO_WINDOW_SIZE
     int "Info GATT Window Size"

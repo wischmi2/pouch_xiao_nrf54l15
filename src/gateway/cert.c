@@ -28,6 +28,21 @@ static uint8_t server_crt_serial[CERT_SERIAL_MAXLEN];
 static atomic_t server_crt_serial_len;
 static atomic_t server_crt_id;
 
+static void log_cert_info(const char *label, const mbedtls_x509_crt *cert)
+{
+    char info[768];
+    int ret = mbedtls_x509_crt_info(info, sizeof(info), "  ", cert);
+
+    if (ret > 0)
+    {
+        LOG_INF("%s:\n%s", label, info);
+    }
+    else
+    {
+        LOG_WRN("Unable to format %s info: -0x%x", label, -ret);
+    }
+}
+
 struct pouch_gateway_device_cert_context
 {
     size_t len;
@@ -164,6 +179,8 @@ static int server_crt_update(size_t len)
         return -EIO;
     }
 
+    LOG_INF("Loaded gateway server cert chain (%zu bytes)", len);
+    log_cert_info("Gateway server cert chain", &cert_chain);
     LOG_HEXDUMP_DBG(cert_chain.serial.p, cert_chain.serial.len, "cert_chain.serial");
 
     memcpy(server_crt_serial, cert_chain.serial.p, cert_chain.serial.len);
@@ -235,7 +252,18 @@ void pouch_gateway_cert_module_on_connected(struct golioth_client *client)
 
     _client = client;
 
-    if (IS_ENABLED(CONFIG_POUCH_GATEWAY_CLOUD))
+    if (IS_ENABLED(CONFIG_POUCH_GATEWAY_SERVER_CERT_BUILTIN))
+    {
+        static const uint8_t server_crt_offline[] = {
+#include "pouch_gateway_server.pem.inc"
+        };
+
+        memcpy(server_crt_buf, server_crt_offline, sizeof(server_crt_offline));
+        server_crt_update(sizeof(server_crt_offline));
+
+        LOG_INF("Loaded builtin server cert");
+    }
+    else if (IS_ENABLED(CONFIG_POUCH_GATEWAY_CLOUD))
     {
         size_t len = sizeof(server_crt_buf);
         status = golioth_gateway_server_cert_get(client, server_crt_buf, &len);
@@ -246,17 +274,6 @@ void pouch_gateway_cert_module_on_connected(struct golioth_client *client)
         }
 
         server_crt_update(len);
-    }
-    else if (IS_ENABLED(CONFIG_POUCH_GATEWAY_SERVER_CERT_BUILTIN))
-    {
-        static const uint8_t server_crt_offline[] = {
-#include "pouch_gateway_server.pem.inc"
-        };
-
-        memcpy(server_crt_buf, server_crt_offline, sizeof(server_crt_offline));
-        server_crt_update(sizeof(server_crt_offline));
-
-        LOG_INF("Loaded builtin server cert");
     }
 
     LOG_HEXDUMP_DBG(server_crt_buf, atomic_get(&server_crt_len), "Server certificate");

@@ -13,6 +13,7 @@ LOG_MODULE_REGISTER(main);
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <zephyr/kernel.h>
 #include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/gpio.h>
 
@@ -29,6 +30,7 @@ LOG_MODULE_REGISTER(main);
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET_OR(DT_ALIAS(led0), gpios, {});
 static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET_OR(DT_ALIAS(sw0), gpios, {});
 static struct gpio_callback button_cb_data;
+static bool led_ready;
 
 #define SOIL_SENSOR_NODE DT_PATH(zephyr_user)
 
@@ -150,7 +152,7 @@ static int led_setting_cb(bool new_value)
 {
     LOG_INF("Received LED setting: %d", (int) new_value);
 
-    if (DT_HAS_ALIAS(led0))
+    if (led_ready)
     {
         gpio_pin_set_dt(&led, new_value ? 1 : 0);
     }
@@ -209,11 +211,34 @@ static void setup_led(void)
         return;
     }
 
-    int err = gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
+    int err = gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
     if (err < 0)
     {
         LOG_WRN("Could not initialize LED");
+        return;
     }
+
+    led_ready = true;
+}
+
+static void blink_stage(uint8_t count)
+{
+    if (!led_ready)
+    {
+        return;
+    }
+
+    LOG_INF("LED stage %u", count);
+
+    for (uint8_t i = 0; i < count; i++)
+    {
+        gpio_pin_set_dt(&led, 1);
+        k_msleep(150);
+        gpio_pin_set_dt(&led, 0);
+        k_msleep(150);
+    }
+
+    k_msleep(500);
 }
 
 /**
@@ -266,21 +291,26 @@ int main(void)
     LOG_INF("Pouch Protocol Version: %d", POUCH_VERSION);
     LOG_INF("Pouch BLE Transport Protocol Version: %d", POUCH_GATT_VERSION);
 
+    setup_led();
+    blink_stage(1);
+
     int err = ble_peripheral_init();
     if (err)
     {
         return err;
     }
+    blink_stage(2);
 
     err = setup_pouch();
     if (err)
     {
         return err;
     }
+    blink_stage(3);
 
-    setup_led();
     setup_button();
     setup_soil_sensor();
+    blink_stage(4);
 
     err = ble_peripheral_start();
     if (err)
@@ -292,6 +322,7 @@ int main(void)
 
     // Request a gateway right away:
     ble_peripheral_request_gateway(true);
+    blink_stage(5);
 
     return 0;
 }

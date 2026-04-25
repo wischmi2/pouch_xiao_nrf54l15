@@ -12,11 +12,19 @@ target_sources(app PRIVATE
   git_describe.h
 )
 
-file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/mk-git-describe.sh
-  "echo \"#define GIT_DESCRIBE \\\\\" > ${CMAKE_CURRENT_BINARY_DIR}/git_describe.h\n"
-  "git describe --always --dirty >> ${CMAKE_CURRENT_BINARY_DIR}/git_describe.h || true\n")
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/mk-git-describe.cmake
+  "execute_process(\n"
+  "  COMMAND git describe --always --dirty\n"
+  "  WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}\n"
+  "  OUTPUT_VARIABLE GIT_DESCRIBE\n"
+  "  OUTPUT_STRIP_TRAILING_WHITESPACE\n"
+  "  ERROR_QUIET\n"
+  ")\n"
+  "if(NOT GIT_DESCRIBE)\n"
+  "  set(GIT_DESCRIBE unknown)\n"
+  "endif()\n"
+  "file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/git_describe.h \"#define GIT_DESCRIBE \${GIT_DESCRIBE}\\n\")\n")
 
 add_custom_command(OUTPUT git_describe.h always_run
-  COMMAND chmod +x ${CMAKE_CURRENT_BINARY_DIR}/mk-git-describe.sh
-  COMMAND ${CMAKE_CURRENT_BINARY_DIR}/mk-git-describe.sh
+  COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/mk-git-describe.cmake
   WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

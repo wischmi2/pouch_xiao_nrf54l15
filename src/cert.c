@@ -6,6 +6,7 @@
 
 #include "cert.h"
 #include <errno.h>
+#include <mbedtls/error.h>
 #include <psa/crypto.h>
 #include <pouch/port.h>
 #include <pouch/transport/certificate.h>
@@ -38,6 +39,36 @@ static struct
 static inline bool cert_is_valid(const struct pouch_cert *cert)
 {
     return cert != NULL && cert->buffer != NULL && cert->size > 0;
+}
+
+static void log_cert_info(const char *label, const mbedtls_x509_crt *cert)
+{
+    char info[768];
+    int ret = mbedtls_x509_crt_info(info, sizeof(info), "  ", cert);
+
+    if (ret > 0)
+    {
+        POUCH_LOG_INF("%s:\n%s", label, info);
+    }
+    else
+    {
+        POUCH_LOG_WRN("Unable to format %s info: -0x%x", label, -ret);
+    }
+}
+
+static void log_verify_flags(uint32_t flags)
+{
+    char info[512];
+    int ret = mbedtls_x509_crt_verify_info(info, sizeof(info), "  ! ", flags);
+
+    if (ret > 0)
+    {
+        POUCH_LOG_ERR("Server cert verify flags:\n%s", info);
+    }
+    else
+    {
+        POUCH_LOG_ERR("Server cert verify flags: 0x%" PRIx32, flags);
+    }
 }
 
 static int parse_x509_cert(const struct pouch_cert *cert, mbedtls_x509_crt *out)
@@ -75,6 +106,9 @@ static mbedtls_x509_crt *load_ca_cert(void)
     {
         return NULL;
     }
+
+    POUCH_LOG_INF("Loaded Pouch CA cert (%zu bytes)", pouch_ca_cert->size);
+    log_cert_info("Pouch CA cert", &ca_cert);
 
     loaded = true;
 
@@ -120,8 +154,11 @@ static int authenticate_server_cert(mbedtls_x509_crt *cert)
         POUCH_LOG_ERR("Failed verifying server cert: 0x%" PRIx32 ", %" PRIx32,
                       (uint32_t) -ret,
                       flags);
+        log_verify_flags(flags);
         return -EPERM;
     }
+
+    POUCH_LOG_INF("Server cert verified against CN %s", CONFIG_POUCH_SERVER_CERT_CN);
 
     return 0;
 }
@@ -176,6 +213,8 @@ int cert_server_set(const struct pouch_cert *certbuf)
         return -EINVAL;
     }
 
+    POUCH_LOG_INF("Received server cert chain (%zu bytes)", certbuf->size);
+
     mbedtls_x509_crt cert_chain;
     err = parse_x509_cert(certbuf, &cert_chain);
     if (err)
@@ -183,6 +222,8 @@ int cert_server_set(const struct pouch_cert *certbuf)
         POUCH_LOG_ERR("Failed loading server cert");
         goto exit;
     }
+
+    log_cert_info("Received server cert chain", &cert_chain);
 
     if (IS_ENABLED(CONFIG_POUCH_VALIDATE_SERVER_CERT))
     {
