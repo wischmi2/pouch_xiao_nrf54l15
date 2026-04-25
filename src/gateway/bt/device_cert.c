@@ -48,15 +48,21 @@ static int device_cert_data_received_cb(void *conn,
 {
     struct pouch_gateway_node_info *node = pouch_gateway_get_node_info(conn);
 
+    LOG_INF("Received device cert chunk: len %zu, first %d, last %d",
+            length,
+            (int) is_first,
+            (int) is_last);
+
     int err = pouch_gateway_device_cert_push(node->device_cert_ctx, data, length);
     if (err)
     {
-        LOG_ERR("Failed to push device cert");
+        LOG_ERR("Failed to push device cert: %d", err);
         goto finish;
     }
 
     if (is_last)
     {
+        LOG_INF("Finishing received device cert");
         err = pouch_gateway_device_cert_finish(node->device_cert_ctx);
         if (err)
         {
@@ -64,6 +70,8 @@ static int device_cert_data_received_cb(void *conn,
             goto finish;
         }
         node->device_cert_ctx = NULL;
+        node->device_cert_provisioned = true;
+        LOG_INF("Device cert provisioned for current node connection");
     }
 
 finish:
@@ -150,6 +158,7 @@ void pouch_gateway_device_cert_read(struct bt_conn *conn)
 
     if (node->device_cert_provisioned)
     {
+        LOG_INF("Device cert already provisioned for this node connection; starting uplink");
         pouch_gateway_uplink_start(conn);
         return;
     }
@@ -169,6 +178,7 @@ void pouch_gateway_device_cert_read(struct bt_conn *conn)
         pouch_gateway_bt_finished(conn);
         return;
     }
+    LOG_INF("Allocated device cert receive context");
 
     node->device_cert_receiver =
         pouch_gatt_receiver_create(send_ack_cb,
@@ -183,6 +193,8 @@ void pouch_gateway_device_cert_read(struct bt_conn *conn)
         pouch_gateway_bt_finished(conn);
         return;
     }
+    LOG_INF("Created device cert GATT receiver with window size %d",
+            CONFIG_POUCH_GATT_DEVICE_CERT_WINDOW_SIZE);
 
     struct bt_gatt_subscribe_params *subscribe_params = &node->device_cert_subscribe_params;
     memset(subscribe_params, 0, sizeof(*subscribe_params));
@@ -198,5 +210,9 @@ void pouch_gateway_device_cert_read(struct bt_conn *conn)
         LOG_ERR("BT subscribe request failed: %d", err);
         device_cert_cleanup(conn);
         pouch_gateway_bt_finished(conn);
+    }
+    else
+    {
+        LOG_INF("Subscribed to device cert characteristic notifications");
     }
 }

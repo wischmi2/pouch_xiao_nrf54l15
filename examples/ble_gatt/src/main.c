@@ -66,20 +66,31 @@ static int read_soil_sensor(int16_t *raw, int32_t *millivolts)
         return -ENODEV;
     }
 
-    struct adc_sequence sequence;
+    struct adc_sequence sequence = {0};
     int16_t sample;
     int err = adc_sequence_init_dt(&soil_sensor_adc, &sequence);
     if (err)
     {
+        LOG_WRN("ADC sequence init failed (err %d)", err);
         return err;
     }
 
     sequence.buffer = &sample;
     sequence.buffer_size = sizeof(sample);
 
+    LOG_INF("Reading soil sensor ADC: device %s, channel %u, resolution %u, buffer_size %zu",
+            soil_sensor_adc.dev->name,
+            soil_sensor_adc.channel_id,
+            sequence.resolution,
+            sequence.buffer_size);
+
     err = adc_read_dt(&soil_sensor_adc, &sequence);
     if (err)
     {
+        LOG_WRN("ADC read failed: err %d, sequence buffer_size %zu, channels 0x%x",
+                err,
+                sequence.buffer_size,
+                (unsigned int) sequence.channels);
         return err;
     }
 
@@ -87,11 +98,13 @@ static int read_soil_sensor(int16_t *raw, int32_t *millivolts)
     err = adc_raw_to_millivolts_dt(&soil_sensor_adc, &sample_mv);
     if (err)
     {
+        LOG_WRN("ADC millivolt conversion failed: err %d, raw %d", err, sample);
         return err;
     }
 
     *raw = sample;
     *millivolts = sample_mv;
+    LOG_INF("Soil sensor ADC sample: raw %d, millivolts %d", sample, sample_mv);
     return 0;
 }
 #else
@@ -132,6 +145,10 @@ static void do_uplink(void)
                  millivolts,
                  raw);
     }
+
+    LOG_INF("Writing soil sensor uplink: path .s/sensor, content_type %d, payload %s",
+            POUCH_CONTENT_TYPE_JSON,
+            data);
 
     pouch_uplink_entry_write(".s/sensor",
                              POUCH_CONTENT_TYPE_JSON,

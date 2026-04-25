@@ -119,6 +119,20 @@ Notes:
 - The gateway firmware must come from the same Pouch protocol version as the XIAO firmware.
 - A gateway built from an older Pouch revision may connect over BLE but fail during certificate exchange.
 - `frdm_rw612` uses `west-zephyr.yml` because it needs Zephyr/NXP HAL support that is not included by `west-ncs.yml`.
+- The working FRDM gateway build uses the Pouch server certificate chain downloaded
+  from Golioth at runtime (`CONFIG_POUCH_GATEWAY_SERVER_CERT_BUILTIN=n`). Do not force
+  the bundled server certificate for this setup: the XIAO encrypts Pouch uplinks to
+  the public key sent by the gateway, and Golioth rejects `.g/pouch` with CoAP `4.00`
+  if that public key does not match the cloud-side key.
+
+Known-good log sequence:
+
+```text
+<inf> cert: Device cert cloud set CoAP response: 2.05
+<inf> cert: Golioth accepted node device cert
+<inf> uplink: Sending uplink block 0: len 173, last 1, closed 1
+<inf> uplink: Delivered uplink block 0: path pouch, block_size 1024
+```
 
 ## Quick Role Summary
 

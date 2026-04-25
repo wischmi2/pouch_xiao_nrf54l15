@@ -104,6 +104,16 @@ static void device_cert_set_callback(struct golioth_client *client,
 {
     struct device_cert_set_ctx *ctx = arg;
 
+    LOG_INF("Device cert cloud set callback: status %d, path %s",
+            status,
+            path ? path : "(null)");
+    if (coap_rsp_code != NULL)
+    {
+        LOG_INF("Device cert cloud set CoAP response: %d.%02d",
+                coap_rsp_code->code_class,
+                coap_rsp_code->code_detail);
+    }
+
     ctx->status = status;
     k_sem_give(&ctx->sem);
 }
@@ -115,8 +125,12 @@ int pouch_gateway_device_cert_finish(struct pouch_gateway_device_cert_context *c
 
     k_sem_init(&ctx.sem, 0, 1);
 
+    LOG_INF("Finishing device cert from node: len %zu", context->len);
+    LOG_HEXDUMP_DBG(context->buf, context->len, "node device cert");
+
     if (IS_ENABLED(CONFIG_POUCH_GATEWAY_CLOUD))
     {
+        LOG_INF("Sending node device cert to Golioth gateway API");
         status = golioth_gateway_device_cert_set(_client,
                                                  context->buf,
                                                  context->len,
@@ -136,6 +150,12 @@ int pouch_gateway_device_cert_finish(struct pouch_gateway_device_cert_context *c
             LOG_ERR("Failed to set cert: %d", ctx.status);
             return -EIO;
         }
+
+        LOG_INF("Golioth accepted node device cert");
+    }
+    else
+    {
+        LOG_INF("Gateway cloud disabled; skipping node device cert upload");
     }
 
     pouch_gateway_device_cert_abort(context);

@@ -74,10 +74,21 @@ west build -p always -b frdm_rw612 pouch/examples/gateway `
 
 This build completed successfully.
 
-This FRDM WiFi configuration enables
-`CONFIG_POUCH_GATEWAY_SERVER_CERT_BUILTIN=y`, so the gateway sends the bundled
-`src/gateway/server-prod.pem` certificate chain to Pouch nodes while still using
-Golioth cloud connectivity for gateway traffic.
+This FRDM WiFi configuration uses
+`CONFIG_POUCH_GATEWAY_SERVER_CERT_BUILTIN=n`, so the gateway downloads the Pouch
+server certificate chain from Golioth at runtime and sends that chain to Pouch
+nodes. This is the known-working path for the soil sensor build.
+
+Do not force the bundled `src/gateway/server-prod.pem` certificate chain for this
+setup. With the bundled chain, the node certificate was accepted by Golioth, but
+uplinks to `.g/pouch` failed with CoAP `4.00 Bad Request`. With the
+Golioth-downloaded chain, the successful gateway log includes:
+
+```text
+<inf> cert: Device cert cloud set CoAP response: 2.05
+<inf> cert: Golioth accepted node device cert
+<inf> uplink: Delivered uplink block 0: path pouch, block_size 1024
+```
 
 ## Flash Command
 

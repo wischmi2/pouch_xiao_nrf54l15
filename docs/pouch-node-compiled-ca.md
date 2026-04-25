@@ -148,6 +148,30 @@ The node should no longer print:
 <err> saead_session: Missing server key
 ```
 
+The known-working production gateway path is to let the gateway download the
+server certificate chain from Golioth at runtime and send that chain to the node.
+The gateway config for the FRDM-RW612 WiFi build therefore keeps:
+
+```text
+CONFIG_POUCH_GATEWAY_SERVER_CERT_BUILTIN=n
+```
+
+Do not force the bundled gateway server certificate for this setup. That can make
+the node verify the certificate successfully while still encrypting the Pouch
+uplink to a public key that Golioth does not accept. The gateway symptom is:
+
+```text
+<err> uplink: Uplink CoAP response: 4.00
+```
+
+The expected successful gateway logs are:
+
+```text
+<inf> cert: Device cert cloud set CoAP response: 2.05
+<inf> cert: Golioth accepted node device cert
+<inf> uplink: Delivered uplink block 0: path pouch, block_size 1024
+```
+
 ## Troubleshooting
 
 If `0x2700, 8` continues, rebuild from a pristine build directory and confirm the

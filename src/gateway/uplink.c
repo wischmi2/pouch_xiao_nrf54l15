@@ -72,10 +72,14 @@ static void block_upload_callback(struct golioth_client *client,
                                   void *arg)
 {
     struct pouch_gateway_uplink *uplink = arg;
+    uint32_t block_idx = uplink->block_idx - 1;
 
     if (!atomic_test_and_clear_bit(uplink->flags, POUCH_UPLINK_SENDING))
     {
-        LOG_ERR("Not sending");
+        LOG_ERR("Unexpected uplink callback while not sending: status %d, path %s, block_size %zu",
+                status,
+                path ? path : "(null)",
+                block_size);
         return;
     }
 
@@ -84,11 +88,26 @@ static void block_upload_callback(struct golioth_client *client,
 
     if (status != GOLIOTH_OK)
     {
-        LOG_ERR("Failed to deliver block: %d", status);
+        LOG_ERR("Failed to deliver uplink block %u: status %d, path %s, block_size %zu",
+                block_idx,
+                status,
+                path ? path : "(null)",
+                block_size);
+        if (status == GOLIOTH_ERR_COAP_RESPONSE && coap_rsp_code != NULL)
+        {
+            LOG_ERR("Uplink CoAP response: %d.%02d",
+                    coap_rsp_code->code_class,
+                    coap_rsp_code->code_detail);
+        }
         uplink->end_cb(uplink->end_cb_arg, POUCH_GATEWAY_UPLINK_ERROR_CLOUD);
         cleanup_uplink(uplink);
         return;
     }
+
+    LOG_INF("Delivered uplink block %u: path %s, block_size %zu",
+            block_idx,
+            path ? path : "(null)",
+            block_size);
 
     process_uplink(uplink);
 }
@@ -121,7 +140,14 @@ static void process_uplink(struct pouch_gateway_uplink *uplink)
 
     uplink->rblock = CONTAINER_OF(n, struct pouch_block, node);
 
-    LOG_DBG("Processing block %zu of size %zu", uplink->block_idx, uplink->rblock->len);
+    bool is_last = sys_slist_is_empty(&uplink->queue) && closed;
+
+    LOG_INF("Sending uplink block %u: len %zu, last %d, closed %d",
+            uplink->block_idx,
+            uplink->rblock->len,
+            (int) is_last,
+            (int) closed);
+    LOG_HEXDUMP_DBG(uplink->rblock->data, uplink->rblock->len, "uplink block payload");
 
     if (!IS_ENABLED(CONFIG_POUCH_GATEWAY_CLOUD))
     {
@@ -147,12 +173,12 @@ static void process_uplink(struct pouch_gateway_uplink *uplink)
                                           uplink->block_idx++,
                                           uplink->rblock->data,
                                           uplink->rblock->len,
-                                          sys_slist_is_empty(&uplink->queue) && closed,
+                                          is_last,
                                           block_upload_callback,
                                           uplink);
     if (status != GOLIOTH_OK)
     {
-        LOG_ERR("Failed to deliver block: %d", status);
+        LOG_ERR("Failed to start uplink block send: status %d", status);
         uplink->end_cb(uplink->end_cb_arg, POUCH_GATEWAY_UPLINK_ERROR_LOCAL);
         cleanup_uplink(uplink);
     }
@@ -174,7 +200,7 @@ static struct pouch_block *block_alloc(struct pouch_gateway_uplink *uplink)
 
 static void submit_block(struct pouch_gateway_uplink *uplink)
 {
-    LOG_DBG("Submitting block of size %zu", uplink->wblock->len);
+    LOG_INF("Queueing uplink block candidate: len %zu", uplink->wblock->len);
     sys_slist_append(&uplink->queue, &uplink->wblock->node);
     uplink->wblock = NULL;
 }
@@ -184,6 +210,8 @@ int pouch_gateway_uplink_write(struct pouch_gateway_uplink *uplink,
                                size_t len,
                                bool is_last)
 {
+    LOG_INF("Gateway uplink write: len %zu, last %d", len, (int) is_last);
+
     while (len)
     {
         if (uplink->wblock != NULL && uplink->wblock->len == sizeof(uplink->wblock->data))
@@ -266,6 +294,10 @@ struct pouch_gateway_uplink *pouch_gateway_uplink_open(
 void pouch_gateway_uplink_close(struct pouch_gateway_uplink *uplink)
 {
     bool closed = atomic_test_and_set_bit(uplink->flags, POUCH_UPLINK_CLOSED);
+
+    LOG_INF("Closing gateway uplink: already_closed %d, pending_len %zu",
+            (int) closed,
+            uplink->wblock ? uplink->wblock->len : 0);
 
     if (!closed && uplink->wblock != NULL)
     {

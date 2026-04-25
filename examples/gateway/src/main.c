@@ -208,9 +208,13 @@ static void bt_disconnected(struct bt_conn *conn, uint8_t reason)
 
 static void security_changed(struct bt_conn *conn, bt_security_t level, enum bt_security_err err)
 {
+    char addr[BT_ADDR_LE_STR_LEN];
+    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+
     if (err)
     {
-        LOG_ERR("BT security change failed. Current level: %d, err: %s(%u)",
+        LOG_ERR("BT security change failed for %s. Current level: %d, err: %s(%u)",
+                addr,
                 level,
                 bt_security_err_to_str(err),
                 err);
@@ -218,12 +222,13 @@ static void security_changed(struct bt_conn *conn, bt_security_t level, enum bt_
         struct bt_conn_info info;
         bt_conn_get_info(conn, &info);
 
+        LOG_WRN("Removing stale bond for %s, id %u", addr, info.id);
         bt_unpair(info.id, info.le.dst);
         bt_conn_disconnect(conn, BT_HCI_ERR_INSUFFICIENT_SECURITY);
     }
     else
     {
-        LOG_INF("BT security changed to level %u", level);
+        LOG_INF("BT security changed for %s to level %u", addr, level);
 
         pouch_gateway_bt_start(conn);
     }
@@ -285,12 +290,21 @@ static struct bt_conn_auth_cb auth_cb = {
 
 static void pairing_complete(struct bt_conn *conn, bool bonded)
 {
-    LOG_INF("Pairing Complete");
+    char addr[BT_ADDR_LE_STR_LEN];
+
+    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+    LOG_INF("Pairing complete for %s, bonded %d", addr, (int) bonded);
 }
 
 static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason)
 {
-    LOG_WRN("Pairing Failed (%d). Disconnecting.", reason);
+    char addr[BT_ADDR_LE_STR_LEN];
+
+    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+    LOG_WRN("Pairing failed for %s: %s(%u). Disconnecting.",
+            addr,
+            bt_security_err_to_str(reason),
+            reason);
 
     bt_conn_disconnect(conn,
                        (reason == BT_SECURITY_ERR_PAIR_NOT_ALLOWED) ? BT_HCI_ERR_PAIRING_NOT_ALLOWED
