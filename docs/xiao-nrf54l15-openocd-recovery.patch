@@ -1,0 +1,116 @@
+diff --git a/boards/seeed/xiao_nrf54l15/support/openocd.cfg b/boards/seeed/xiao_nrf54l15/support/openocd.cfg
+index 82f6bb5f25b..e2a1ba14166 100644
+--- a/boards/seeed/xiao_nrf54l15/support/openocd.cfg
++++ b/boards/seeed/xiao_nrf54l15/support/openocd.cfg
+@@ -66,4 +66,108 @@ if {![using_hla]} {
+ proc nrf54l-load {file} {
+ 	mww 0x5004b500 0x101
+ 	load_image $file
+-}
+\ No newline at end of file
++}
++
++# Define CTRL_AP_NUM explicitly to avoid variable errors.
++set CTRL_AP_NUM 2
++
++# Check whether the nRF54L CTRL-AP reports the application AP as locked.
++proc _nrf_check_ap_lock { ctrl_ap_num unlocked_value } {
++	set target [target current]
++	set dap [$target cget -dap]
++	set err [catch {set APPROTECTSTATUS [$dap apreg $ctrl_ap_num 0xc]}]
++	if {$err == 0 && $APPROTECTSTATUS < $unlocked_value} {
++		echo "\[$target\] device has AP lock engaged, trying recover."
++		poll off
++		return 1
++	}
++	return 0
++}
++
++# Recover nRF54L by triggering ERASEALL through CTRL-AP AP #2.
++proc _nrf_ctrl_ap_recover { ctrl_ap_num {is_cpunet 0} } {
++	set target [target current]
++	set dap [$target cget -dap]
++
++	set IDR [$dap apreg $ctrl_ap_num 0xfc]
++	if {$IDR != 0x32880000} {
++		echo "Error: Cannot access nRF54L CTRL-AP! (IDR: 0x$IDR)"
++		return
++	}
++
++	poll off
++
++	$dap apreg $ctrl_ap_num 4 0
++	$dap apreg $ctrl_ap_num 4 1
++
++	set timeout 300
++	for {set i 0} {$i < $timeout} {incr i} {
++		set ERASEALLSTATUS [$dap apreg $ctrl_ap_num 8]
++		if {$ERASEALLSTATUS == 2} {
++			break
++		}
++		if {$ERASEALLSTATUS == 3} {
++			echo "Error: Erase failed with ERROR status."
++			return
++		}
++		sleep 100
++	}
++	if {$i >= $timeout} {
++		echo "Error: Timeout waiting for BUSY status."
++		return
++	}
++
++	for {set i 0} {$i < $timeout} {incr i} {
++		set ERASEALLSTATUS [$dap apreg $ctrl_ap_num 8]
++		if {$ERASEALLSTATUS == 1} {
++			echo "\[$target\] device has been successfully erased and unlocked."
++			break
++		}
++		if {$ERASEALLSTATUS == 3} {
++			echo "Error: Erase failed with ERROR status."
++			break
++		}
++		sleep 100
++	}
++	if {$i >= $timeout} {
++		echo "Error: Timeout waiting for READYTORESET status."
++		return
++	}
++
++	sleep 10
++
++	$dap apreg $ctrl_ap_num 0 2
++	sleep 10
++	$dap apreg $ctrl_ap_num 0 0
++
++	$dap apreg $ctrl_ap_num 4 0
++
++	if { $is_cpunet } {
++		reset init
++	} else {
++		sleep 200
++		$target arp_examine
++		poll on
++	}
++}
++
++lappend _telnet_autocomplete_skip _nrf_check_ap_lock _nrf_ctrl_ap_recover
++
++if { ![using_hla] } {
++	$_TARGETNAME configure -event examine-fail {
++		global CTRL_AP_NUM
++		set target [target current]
++		if { [_nrf_check_ap_lock $CTRL_AP_NUM 1] } {
++			nrf54l_mass_erase
++			$target arp_examine
++		}
++	}
++
++	proc nrf54l_mass_erase {} {
++		global CTRL_AP_NUM
++		_nrf_ctrl_ap_recover $CTRL_AP_NUM
++	}
++	add_help_text nrf54l_mass_erase "Mass erase flash and unlock nRF54L device"
++}
++
++flash bank $_CHIPNAME.flash nrf5 0x00000000 0x0017D000 0 0 $_TARGETNAME
+\ No newline at end of file

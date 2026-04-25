@@ -43,6 +43,20 @@ C:/ncs_pouch_soil/zephyr/boards/seeed/xiao_nrf54l15/support/openocd.cfg.bak
 The patch added nRF54L CTRL-AP recovery support equivalent to the upstream
 Zephyr `main` board config:
 
+The exact patch is saved in this repository at:
+
+```text
+docs/xiao-nrf54l15-openocd-recovery.patch
+```
+
+To reapply it after replacing or updating the local Zephyr checkout:
+
+```powershell
+cd C:/ncs_pouch_soil/zephyr
+git apply --ignore-space-change --ignore-whitespace `
+  C:/ncs_pouch_soil/pouch/docs/xiao-nrf54l15-openocd-recovery.patch
+```
+
 ```tcl
 # Define CTRL_AP_NUM explicitly to avoid variable errors.
 set CTRL_AP_NUM 2
