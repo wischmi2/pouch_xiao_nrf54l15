@@ -11,6 +11,7 @@ target_sources(app PRIVATE
   src/main.c
   src/credentials.c
   src/fatal_error.c
-  src/fw_update.c
   src/ble_peripheral.c
 )
+
+target_sources_ifdef(CONFIG_GOLIOTH_OTA app PRIVATE src/fw_update.c)

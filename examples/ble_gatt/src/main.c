@@ -23,7 +23,9 @@ LOG_MODULE_REGISTER(main);
 #include <pouch/downlink.h>
 #include <pouch/transport/gatt/common/types.h>
 
+#ifdef CONFIG_GOLIOTH_SETTINGS
 #include <pouch/golioth/settings_callbacks.h>
+#endif
 
 #include <app_version.h>
 
@@ -153,15 +155,16 @@ static void build_soil_sensor_payload(char *data, size_t data_len)
 static void write_soil_sensor_uplink(const char *data)
 {
     int err;
+    size_t data_len = strlen(data);
 
-    LOG_INF("Writing soil sensor uplink: path .s/sensor, content_type %d, payload %s",
+    LOG_INF("Writing soil sensor uplink: path .s/sensor, content_type %d, len %zu",
             POUCH_CONTENT_TYPE_JSON,
-            data);
+            data_len);
 
     err = pouch_uplink_entry_write(".s/sensor",
                                    POUCH_CONTENT_TYPE_JSON,
                                    data,
-                                   strlen(data),
+                                   data_len,
                                    POUCH_FOREVER);
     if (err)
     {
@@ -201,6 +204,7 @@ static void do_uplink(void)
 
 POUCH_UPLINK_HANDLER(do_uplink);
 
+#ifdef CONFIG_GOLIOTH_SETTINGS
 /**
  * Settings handler for the "LED" setting.
  *
@@ -220,6 +224,7 @@ static int led_setting_cb(bool new_value)
 }
 
 GOLIOTH_SETTINGS_HANDLER(LED, led_setting_cb);
+#endif
 
 /**
  * Setup pouch stack.

@@ -17,6 +17,25 @@ Responsibilities:
 - Stores its device certificate and private key in LittleFS.
 - Advertises the Pouch BLE GATT service so the gateway can connect.
 
+Current known-good node configuration:
+
+```text
+CONFIG_POUCH_THREAD_STACK_SIZE=8192
+CONFIG_POUCH_UPLINK_PROCESSING_STACK_SIZE=8192
+CONFIG_GOLIOTH_SETTINGS=n
+CONFIG_GOLIOTH_OTA=n
+```
+
+`CONFIG_GOLIOTH_SETTINGS=y` currently reproduces a node crash in the `pouch_work`
+thread during the first sync after the server certificate is verified. The stable
+soil sensor build keeps Golioth Settings disabled, which means Golioth cloud
+Settings cannot be used to send commands such as `LED=true` to the node. Soil
+sensor uplinks still work.
+
+OTA is also disabled in the current soil sensor node image. The app CMake file
+now only builds `src/fw_update.c` when `CONFIG_GOLIOTH_OTA=y`, so OTA can be
+re-enabled for future debugging without breaking non-OTA builds.
+
 Build target:
 
 ```text
@@ -48,8 +67,9 @@ Credentials expected on the XIAO:
 Upload over the XIAO USB serial port, for example `COM8`:
 
 ```powershell
-smpmgr --port COM8 --mtu 128 file upload C:/path/to/device.crt.der /lfs1/credentials/crt.der
-smpmgr --port COM8 --mtu 128 file upload C:/path/to/device.key.der /lfs1/credentials/key.der
+$env:PYTHONUTF8='1'
+smpmgr --port COM8 --line-length 128 --line-buffers 2 file upload C:/path/to/device.crt.der /lfs1/credentials/crt.der
+smpmgr --port COM8 --line-length 128 --line-buffers 2 file upload C:/path/to/device.key.der /lfs1/credentials/key.der
 ```
 
 Notes:
@@ -57,6 +77,9 @@ Notes:
 - The XIAO app currently builds with `--no-sysbuild`.
 - MCUboot/sysbuild currently fails for this board because MCUboot cannot determine the flash device metadata.
 - Direct flashing is enough for app bring-up, but MCUboot must be fixed later for signed DFU/OTA flows.
+- If LittleFS is reformatted after flashing, the node will log
+  `Failed to load certificate (err -2)` until `/lfs1/credentials/crt.der` and
+  `/lfs1/credentials/key.der` are uploaded again.
 
 ## FRDM-RW612: Pouch Gateway
 
@@ -130,7 +153,7 @@ Known-good log sequence:
 ```text
 <inf> cert: Device cert cloud set CoAP response: 2.05
 <inf> cert: Golioth accepted node device cert
-<inf> uplink: Sending uplink block 0: len 173, last 1, closed 1
+<inf> uplink: Sending uplink block 0: len 111, last 1, closed 1
 <inf> uplink: Delivered uplink block 0: path pouch, block_size 1024
 ```
 

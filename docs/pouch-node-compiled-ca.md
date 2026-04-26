@@ -79,6 +79,22 @@ xiao_nrf54l15/nrf54l15/cpuapp
 
 It uses `--no-sysbuild`, which is the current working path for this board.
 
+The current stable soil sensor node image also uses:
+
+```text
+CONFIG_POUCH_THREAD_STACK_SIZE=8192
+CONFIG_POUCH_UPLINK_PROCESSING_STACK_SIZE=8192
+CONFIG_GOLIOTH_SETTINGS=n
+CONFIG_GOLIOTH_OTA=n
+```
+
+The larger Pouch stacks prevent the callback/uplink path from corrupting the
+node during soil sensor sync. `CONFIG_GOLIOTH_SETTINGS=y` currently reproduces a
+`pouch_work` crash after server certificate verification, so cloud Settings are
+disabled for the working soil sensor build. With Settings disabled, Golioth
+cannot send Settings-based commands to the node, but normal soil data uplinks
+continue to work.
+
 ## 4. Flash the XIAO Node
 
 With the XIAO debugger connected:
@@ -117,15 +133,27 @@ Close the COM8 serial terminal first, then run from PowerShell:
 
 ```powershell
 cd C:/ncs_pouch_soil/pouch
-& "$env:APPDATA\Python\Python312\Scripts\smpmgr.exe" --port COM8 --mtu 128 file upload .\certs\chocolate-voiceless-mastodon.crt.der /lfs1/credentials/crt.der
-& "$env:APPDATA\Python\Python312\Scripts\smpmgr.exe" --port COM8 --mtu 128 file upload .\certs\chocolate-voiceless-mastodon.key.der /lfs1/credentials/key.der
+$env:PYTHONUTF8='1'
+smpmgr.exe --port COM8 --line-length 128 --line-buffers 2 file upload .\certs\chocolate-voiceless-mastodon.crt.der /lfs1/credentials/crt.der
+smpmgr.exe --port COM8 --line-length 128 --line-buffers 2 file upload .\certs\chocolate-voiceless-mastodon.key.der /lfs1/credentials/key.der
 ```
 
 To check whether they are present:
 
 ```powershell
-& "$env:APPDATA\Python\Python312\Scripts\smpmgr.exe" --port COM8 --mtu 128 file list /lfs1/credentials
+smpmgr.exe --port COM8 --line-length 128 --line-buffers 2 file read-size /lfs1/credentials/crt.der
+smpmgr.exe --port COM8 --line-length 128 --line-buffers 2 file read-size /lfs1/credentials/key.der
 ```
+
+Expected sizes for the two current XIAO certificates are `380` bytes for
+`crt.der` and `138` bytes for `key.der`. If LittleFS reformats after flashing,
+the node will stop at:
+
+```text
+<err> main: Failed to load certificate (err -2)
+```
+
+Re-upload the cert and key, then reset the node.
 
 ## 6. Retry the Gateway Sync
 
@@ -169,6 +197,7 @@ The expected successful gateway logs are:
 ```text
 <inf> cert: Device cert cloud set CoAP response: 2.05
 <inf> cert: Golioth accepted node device cert
+<inf> uplink: Sending uplink block 0: len 111, last 1, closed 1
 <inf> uplink: Delivered uplink block 0: path pouch, block_size 1024
 ```
 
