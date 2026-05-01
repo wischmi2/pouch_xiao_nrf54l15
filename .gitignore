@@ -1,7 +1,9 @@
 build/
 .cache
 .DS_Store
-.vscode
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
 twister-out*/
 sdkconfig
 sdkconfig.old

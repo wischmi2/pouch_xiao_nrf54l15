@@ -1,0 +1,56 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Kill stale debug processes",
+      "type": "shell",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "Get-Process openocd,pyocd,arm-zephyr-eabi-gdb,gdb -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; exit 0"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Start XIAO OpenOCD",
+      "type": "process",
+      "command": "C:/Users/Brian/AppData/Local/Microsoft/WinGet/Packages/xpack-dev-tools.openocd-xpack_Microsoft.Winget.Source_8wekyb3d8bbwe/xpack-openocd-0.12.0-7/bin/openocd.exe",
+      "args": [
+        "-s",
+        "C:/Program Files/OpenOCD/share/openocd/scripts",
+        "-f",
+        "C:/ncs_pouch_soil/zephyr/boards/seeed/xiao_nrf54l15/support/openocd.cfg",
+        "-c",
+        "gdb memory_map disable"
+      ],
+      "isBackground": true,
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "Kill stale debug processes"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": [
+        {
+          "owner": "custom",
+          "pattern": [
+            {
+              "regexp": "^(.*)$",
+              "message": 1
+            }
+          ],
+          "background": {
+            "activeOnStart": true,
+            "endsPattern": "Listening on port 3333 for gdb connections"
+          }
+        }
+      ]
+    }
+  ]
+}

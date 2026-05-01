@@ -1,0 +1,31 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "XIAO nRF54L15 OpenOCD",
+      "type": "cortex-debug",
+      "request": "attach",
+      "preLaunchTask": "Start XIAO OpenOCD",
+      "postDebugTask": "Kill stale debug processes",
+      "cwd": "${workspaceFolder}/pouch/examples/ble_gatt",
+      "executable": "${workspaceFolder}/pouch/examples/ble_gatt/build/zephyr/zephyr.elf",
+      "servertype": "external",
+      "gdbTarget": "localhost:3333",
+      "gdbPath": "C:/Users/Brian/zephyr-sdk-0.17.2/arm-zephyr-eabi/bin/arm-zephyr-eabi-gdb.exe",
+      "preAttachCommands": [
+        "monitor reset halt"
+      ],
+      "postAttachCommands": [
+        "thbreak main",
+        "continue"
+      ],
+      "overrideRestartCommands": [
+        "monitor reset halt"
+      ],
+      "overrideResetCommands": [
+        "monitor reset halt"
+      ],
+      "showDevDebugOutput": "raw"
+    }
+  ]
+}

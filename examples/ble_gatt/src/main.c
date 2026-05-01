@@ -39,6 +39,8 @@ static char manual_uplink_payload[96];
 static bool manual_uplink_pending;
 
 #define SOIL_SENSOR_NODE DT_PATH(zephyr_user)
+#define SOIL_SENSOR_DRY_RAW 2936
+#define SOIL_SENSOR_WATER_RAW 2212
 
 #if DT_NODE_HAS_PROP(SOIL_SENSOR_NODE, io_channels)
 static const struct adc_dt_spec soil_sensor_adc =
@@ -128,6 +130,23 @@ static int read_soil_sensor(int16_t *raw, int32_t *millivolts)
 }
 #endif
 
+static int soil_sensor_raw_to_percent(int16_t raw)
+{
+    const int range = SOIL_SENSOR_DRY_RAW - SOIL_SENSOR_WATER_RAW;
+
+    if (raw >= SOIL_SENSOR_DRY_RAW)
+    {
+        return 0;
+    }
+
+    if (raw <= SOIL_SENSOR_WATER_RAW)
+    {
+        return 100;
+    }
+
+    return ((SOIL_SENSOR_DRY_RAW - raw) * 100 + (range / 2)) / range;
+}
+
 /**
  * Build the JSON payload for one soil sensor reading.
  */
@@ -144,9 +163,12 @@ static void build_soil_sensor_payload(char *data, size_t data_len)
     }
     else
     {
+        int moisture_percent = soil_sensor_raw_to_percent(raw);
+
         snprintf(data,
                  data_len,
-                 "{\"soil_moisture_mv\":%d,\"soil_moisture_raw\":%d}",
+                 "{\"soil_moisture_percent\":%d,\"soil_moisture_mv\":%d,\"soil_moisture_raw\":%d}",
+                 moisture_percent,
                  millivolts,
                  raw);
     }
