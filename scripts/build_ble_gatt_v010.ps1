@@ -21,12 +21,30 @@ function Resolve-ExistingPath {
 }
 
 function Resolve-ZephyrSdk {
+    param([string]$NcsVersionDir = "")
+
     $sdkFromEnv = $env:ZEPHYR_SDK_INSTALL_DIR
     if ($sdkFromEnv -and (Test-Path $sdkFromEnv)) {
         return (Resolve-Path $sdkFromEnv).Path
     }
 
-    $candidates = @(
+    $candidates = @()
+
+    $toolchainsJson = "C:/ncs/toolchains/toolchains.json"
+    if ($NcsVersionDir -and (Test-Path $toolchainsJson)) {
+        $meta = Get-Content $toolchainsJson -Raw | ConvertFrom-Json
+        $versionName = Split-Path $NcsVersionDir -Leaf
+        foreach ($entry in $meta.toolchains) {
+            if ($entry.ncs_versions -contains $versionName) {
+                $bundle = $entry.identifier.bundle_id
+                $candidates += "C:/ncs/toolchains/$bundle/opt/zephyr-sdk"
+            }
+        }
+    }
+
+    $candidates += @(
+        "C:/ncs/toolchains/fd21892d0f/opt/zephyr-sdk"
+        "C:/ncs/toolchains/0b393f9e1b/opt/zephyr-sdk"
         "C:/ncs/toolchains/66cdf9b75e/opt/zephyr-sdk"
     )
     if (Test-Path "C:/ncs/toolchains") {
@@ -35,6 +53,11 @@ function Resolve-ZephyrSdk {
     }
 
     return Resolve-ExistingPath $candidates
+}
+
+function Test-NcsToolchainInstall {
+    param([string]$Root)
+    return $Root -match '^[A-Za-z]:[/\\]ncs[/\\]v\d+\.\d+\.\d+$' -and (Test-Path (Join-Path $Root ".west"))
 }
 
 function Test-WestWorkspace {
@@ -89,6 +112,8 @@ See docs/v0.1.0-build-steps.md and docs/battery_issues.md.
 if (-not $WorkspaceRoot) {
     $WorkspaceRoot = Resolve-ExistingPath @(
         $env:POUCH_NCS_ROOT
+        "C:/ncs/v3.2.3"
+        "C:/ncs/v3.2.0"
         "C:/ncs_pouch_soil"
         "C:/Users/Brian/ncs"
     )
@@ -103,7 +128,7 @@ if (-not $PouchRepoPath) {
 }
 
 if (-not $WorkspaceRoot) {
-    Write-Error "No NCS west workspace found. Set POUCH_NCS_ROOT or create C:/Users/Brian/ncs per docs/v0.1.0-build-steps.md."
+    Write-Error "No NCS west workspace found. Set POUCH_NCS_ROOT or install NCS under C:/ncs/v3.2.3 (Toolchain Manager). See docs/v0.1.0-build-steps.md."
 }
 
 if (-not $PouchRepoPath) {
@@ -116,7 +141,9 @@ $workspacePouch = Join-Path $WorkspaceRoot "pouch"
 $appDir = Join-Path $PouchRepoPath "examples/ble_gatt"
 $buildDir = Join-Path $appDir "build"
 
-$sdk = Resolve-ZephyrSdk
+$useNcsInstall = Test-NcsToolchainInstall $WorkspaceRoot
+
+$sdk = Resolve-ZephyrSdk -NcsVersionDir $(if ($useNcsInstall) { $WorkspaceRoot } else { "" })
 if (-not $sdk) {
     Write-Error "Zephyr SDK not found. Install NCS toolchains or set ZEPHYR_SDK_INSTALL_DIR."
 }
@@ -127,7 +154,9 @@ if (-not ($env:Path -split ";" | Where-Object { $_ -eq $pythonScripts })) {
     $env:Path = "$pythonScripts;$env:Path"
 }
 
-if (-not $BoardRoot) {
+if ($useNcsInstall) {
+    $BoardRoot = ""
+} elseif (-not $BoardRoot) {
     $BoardRoot = Resolve-ExistingPath @(
         "C:/Users/Brian/zephyr"
     )
@@ -142,9 +171,15 @@ Write-Host "Build directory   : $buildDir"
 Write-Host "Zephyr SDK        : $sdk"
 Write-Host "Board             : $Board"
 Write-Host "BoardRoot         : $(if ($BoardRoot) { $BoardRoot } else { '(default)' })"
+Write-Host "NCS install layout: $useNcsInstall"
 Write-Host "Sysbuild          : $UseSysbuild"
 
-Ensure-PouchModule -WorkspacePouch $workspacePouch -DevPouch $PouchRepoPath
+if (-not $useNcsInstall) {
+    Ensure-PouchModule -WorkspacePouch $workspacePouch -DevPouch $PouchRepoPath
+}
+else {
+    Write-Host "== Using Toolchain Manager NCS ($WorkspaceRoot); pouch via ZEPHYR_EXTRA_MODULES =="
+}
 
 Push-Location $WorkspaceRoot
 try {
@@ -175,6 +210,9 @@ try {
     }
 
     $cmakeArgs = @()
+    if ($useNcsInstall) {
+        $cmakeArgs += "-DZEPHYR_EXTRA_MODULES=$($PouchRepoPath -replace '\\', '/')"
+    }
     if ($BoardRoot) {
         $cmakeArgs += "-DBOARD_ROOT=$($BoardRoot -replace '\\', '/')"
     }
