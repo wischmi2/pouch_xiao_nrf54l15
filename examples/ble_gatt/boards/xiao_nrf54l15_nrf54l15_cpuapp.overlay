@@ -4,7 +4,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <zephyr/dt-bindings/adc/nrf-saadc.h>
+
 / {
+	/*
+	 * Omit this block if your Zephyr board DTS already defines vbat_pwr
+	 * (upstream/NCS 3.2.3+ xiao_nrf54l15) and the build reports a duplicate label.
+	 */
+	vbat_pwr: vbat-pwr {
+		compatible = "regulator-fixed";
+		regulator-name = "vbat";
+		enable-gpios = <&gpio1 15 GPIO_ACTIVE_HIGH>;
+	};
+
 	fstab {
 		compatible = "zephyr,fstab";
 		lfs1: lfs1 {
@@ -21,7 +33,31 @@
 	};
 
 	zephyr,user {
-		/* XIAO nRF54L15 A0 is wired to SAADC channel 0 by the board DTS. */
-		io-channels = <&adc 0>;
+		/* Soil: SAADC ch0. Battery: AIN7 (SAADC ch7) via vbat_pwr divider. */
+		io-channels = <&adc 0>, <&adc 7>;
+	};
+};
+
+&adc {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@0 {
+		reg = <0>;
+		zephyr,gain = "ADC_GAIN_1_4";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,input-positive = <NRF_SAADC_AIN0>;
+		zephyr,resolution = <12>;
+	};
+
+	channel@7 {
+		reg = <7>;
+		zephyr,gain = "ADC_GAIN_1_4";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,input-positive = <NRF_SAADC_AIN7>;
+		zephyr,resolution = <12>;
 	};
 };

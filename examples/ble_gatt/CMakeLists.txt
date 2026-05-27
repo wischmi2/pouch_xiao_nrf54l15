@@ -9,6 +9,7 @@ project(ble_gatt_example)
 
 target_sources(app PRIVATE
   src/main.c
+  src/battery.c
   src/credentials.c
   src/fatal_error.c
   src/ble_peripheral.c

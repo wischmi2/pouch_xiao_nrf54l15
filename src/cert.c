@@ -43,6 +43,10 @@ static inline bool cert_is_valid(const struct pouch_cert *cert)
 
 static void log_cert_info(const char *label, const mbedtls_x509_crt *cert)
 {
+#if defined(MBEDTLS_X509_REMOVE_INFO)
+    ARG_UNUSED(cert);
+    POUCH_LOG_INF("%s: certificate parsed", label);
+#else
     char info[768];
     int ret = mbedtls_x509_crt_info(info, sizeof(info), "  ", cert);
 
@@ -54,10 +58,14 @@ static void log_cert_info(const char *label, const mbedtls_x509_crt *cert)
     {
         POUCH_LOG_WRN("Unable to format %s info: -0x%x", label, -ret);
     }
+#endif
 }
 
 static void log_verify_flags(uint32_t flags)
 {
+#if defined(MBEDTLS_X509_REMOVE_INFO)
+    POUCH_LOG_ERR("Server cert verify flags: 0x%" PRIx32, flags);
+#else
     char info[512];
     int ret = mbedtls_x509_crt_verify_info(info, sizeof(info), "  ! ", flags);
 
@@ -69,6 +77,7 @@ static void log_verify_flags(uint32_t flags)
     {
         POUCH_LOG_ERR("Server cert verify flags: 0x%" PRIx32, flags);
     }
+#endif
 }
 
 static int parse_x509_cert(const struct pouch_cert *cert, mbedtls_x509_crt *out)

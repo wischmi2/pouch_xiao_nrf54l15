@@ -7,6 +7,7 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(main);
 
+#include "battery.h"
 #include "credentials.h"
 #include "ble_peripheral.h"
 
@@ -222,6 +223,9 @@ static void do_uplink(void)
     }
 
     write_soil_sensor_uplink(data);
+
+    build_battery_payload(data, sizeof(data));
+    write_battery_uplink(data);
 }
 
 POUCH_UPLINK_HANDLER(do_uplink);
@@ -422,6 +426,7 @@ int main(void)
 
     setup_button();
     setup_soil_sensor();
+    setup_battery();
     blink_stage(4);
 
     err = ble_peripheral_start();

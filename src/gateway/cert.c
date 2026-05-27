@@ -30,6 +30,10 @@ static atomic_t server_crt_id;
 
 static void log_cert_info(const char *label, const mbedtls_x509_crt *cert)
 {
+#if defined(MBEDTLS_X509_REMOVE_INFO)
+    ARG_UNUSED(cert);
+    LOG_INF("%s: certificate parsed", label);
+#else
     char info[768];
     int ret = mbedtls_x509_crt_info(info, sizeof(info), "  ", cert);
 
@@ -41,6 +45,7 @@ static void log_cert_info(const char *label, const mbedtls_x509_crt *cert)
     {
         LOG_WRN("Unable to format %s info: -0x%x", label, -ret);
     }
+#endif
 }
 
 struct pouch_gateway_device_cert_context
