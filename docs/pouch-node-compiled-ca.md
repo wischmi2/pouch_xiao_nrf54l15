@@ -1,17 +1,7 @@
-# Pouch Node Compiled CA Trust Anchor
+# Pouch Node Server Certificate: Compiled CA and `0x2700, 8` Troubleshooting
 
-This note explains how to get the Pouch server CA certificate compiled into the
-XIAO nRF54L15 Pouch node firmware.
-
-The node uses two different kinds of certificates:
-
-- Device identity credentials: uploaded to LittleFS at runtime as
-  `/lfs1/credentials/crt.der` and `/lfs1/credentials/key.der`.
-- Server CA trust anchor: compiled into the firmware image at build time and
-  used to verify the Pouch server certificate sent by the gateway.
-
-If the node logs this error, the runtime device cert/key may be present, but the
-compiled server CA is wrong or missing:
+This note covers the Pouch server-certificate trust model on the XIAO nRF54L15
+Pouch node, and how to diagnose and fix the TLS verification error:
 
 ```text
 <err> cert: Failed verifying server cert: 0x2700, 8
@@ -19,33 +9,218 @@ compiled server CA is wrong or missing:
 <err> saead_uplink: Session key generation failed
 ```
 
-Flag `8` means the received server certificate is not trusted by the CA that was
-compiled into the node firmware.
+## What the error means
 
-## 1. Get the Correct CA Certificate
+The error is logged by the node in `pouch/src/cert.c`
+(`authenticate_server_cert()`):
 
-For the production gateway that connects to `coap.golioth.io`, the node needs
-the production Golioth/Pouch server CA certificate in DER format.
+- `0x2700` = mbedTLS `MBEDTLS_ERR_X509_CERT_VERIFY_FAILED`.
+- `8` = the verify flag `MBEDTLS_X509_BADCERT_NOT_TRUSTED`, i.e. *"the
+  presented certificate is not signed by a CA I trust."*
 
-The default firmware setting expects this file:
+The node received the Golioth **server certificate chain** (the gateway
+downloads it from Golioth and relays it over GATT) and rejected it because the
+chain does not terminate at the **CA trust anchor compiled into the node
+firmware**.
 
-```text
-C:/ncs_pouch_soil/pouch/src/goliothrootx1.der
-```
+This is a runtime TLS trust failure. It is **not** a programming, J-Link, or
+nRF54L15 readback-protection (`--recover`) error.
 
-Do not confuse this with the node device certificate and key in `certs/`:
+## The two certificates
+
+The node uses two different kinds of certificates. Do not confuse them:
+
+| Cert | Purpose | Where it lives | Set when |
+|---|---|---|---|
+| **Server CA trust anchor** (`goliothrootx1.der`) | verifies the server cert the gateway sends | compiled into the firmware image | **build time** |
+| **Device identity** (`crt.der` / `key.der`) | identifies the node to Golioth | LittleFS `/lfs1/credentials/` | runtime upload |
+
+The cert that produces `0x2700, 8` is the **compiled-in CA**. The device identity
+files are uploaded at runtime:
 
 ```text
 C:/ncs_pouch_soil/pouch/certs/chocolate-voiceless-mastodon.crt.der
 C:/ncs_pouch_soil/pouch/certs/chocolate-voiceless-mastodon.key.der
 ```
 
-Those two files identify the node. They are still uploaded to LittleFS, but they
-are not the CA trust anchor used to verify the server cert.
+## Why a re-flash / rebuild can trigger it
 
-## 2. Place the CA File in the Default Path
+Because the trust anchor is fixed at **build time** but the server cert arrives
+at **runtime**, "it worked, then I rebuilt/reflashed and it broke" usually means
+the compiled bytes changed, the node config changed, or the environment the
+gateway talks to changed.
 
-Copy the Golioth Root X1 DER file to:
+The two most common causes:
+
+1. **Wrong/corrupt compiled CA file.** `pouch/src/goliothrootx1.der` was
+   overwritten or replaced (e.g. with a dev root or with one of the device
+   certs). Every build from that tree — including a rebuilt, previously-working
+   branch — then bakes in a CA that no longer matches Golioth's server cert.
+   (If the file were simply missing, the build would fail via
+   `find_file(... REQUIRED)`, so a silent runtime break means "present but
+   wrong contents.")
+2. **Prod/dev environment mismatch** between the gateway and the node.
+
+> A wiped LittleFS produces `Failed to load certificate (err -2)` (the
+> device-identity cert), **not** `0x2700, 8`. Different failure — see step 5
+> below to re-upload the device cert/key.
+
+## How prod vs. dev is selected
+
+**Gateway (FRDM-RW612):** `CONFIG_GOLIOTH_COAP_HOST_URI`
+(sysbuild `SB_CONFIG_GOLIOTH_COAP_HOST_URI`) selects the endpoint:
+
+- `coaps://coap.golioth.io` = **production** (default)
+- `coaps://coap.golioth.dev` = development
+
+The gateway downloads the server cert chain from that endpoint (with
+`CONFIG_POUCH_GATEWAY_SERVER_CERT_BUILTIN` not set) and relays it to the node.
+The runtime PSK (`golioth/psk-id`, `golioth/psk`) decides which Golioth
+project/instance actually serves that cert.
+
+**Node (XIAO nRF54L15):** trusts only what it compiled in:
+
+- CA: `CONFIG_POUCH_CA_CERT_FILENAME` (default `src/goliothrootx1.der`, the
+  production Golioth Root X1).
+- Expected hostname: `CONFIG_POUCH_SERVER_CERT_CN` (default `pouch.golioth.io`).
+
+The node CN is auto-switched to `pouch.golioth.dev` **only in the BabbleSim
+(`bsim`) build** (see `examples/gateway/sysbuild.cmake`). A real-hardware node
+keeps `pouch.golioth.io` + Root X1 unless changed by hand. So if the gateway is
+talking to dev while the node was built for prod (or vice versa), verification
+fails with `0x2700, 8`.
+
+## Diagnosing the failure
+
+### Step 1 - Capture the node serial log
+
+The node prints both the compiled trust anchor and the received server cert
+right before failing. Connect to the XIAO serial console (COM8 on this setup),
+then reboot both boards:
+
+```text
+kernel reboot
+```
+
+Look for, in order:
+
+```text
+<inf> cert: Loaded Pouch CA cert (N bytes)
+<inf> cert: Pouch CA cert:
+  ! ... subject / issuer of the COMPILED-IN trust anchor ...
+<inf> cert: Received server cert chain (M bytes)
+<inf> cert: Received server cert chain:
+  ! ... subject / issuer / validity of what the GATEWAY delivered ...
+<err> cert: Failed verifying server cert: 0x2700, 8
+<err> cert: Server cert verify flags:
+  ! The certificate is not correctly signed by the trusted CA
+```
+
+### Step 2 - Compare the two certs (the actual test)
+
+- **Received server cert subject/CN:** production is `pouch.golioth.io`. If it
+  shows `pouch.golioth.dev` (or anything else), the gateway is on a different
+  environment -> **mismatch confirmed**.
+- **Received server cert issuer vs. compiled CA subject:** if the received
+  chain's root issuer is not the same Golioth root you compiled in, that is
+  exactly what flag `8` (NOT_TRUSTED) reports -> **mismatch (or wrong CA file)
+  confirmed**.
+- If the CN matches `pouch.golioth.io` **and** the issuer chain matches your
+  compiled root, the environment mismatch is **ruled out** — investigate the
+  compiled CA bytes (cause #1) instead.
+
+> Interpretation caveat: a *pure* CN-only mismatch (right root, wrong hostname)
+> sets flag `4` (`CN_MISMATCH`). A different signing root sets flag `8`
+> (`NOT_TRUSTED`). Since the symptom is `8`, the strongest signal is the
+> **issuer comparison**, not just the hostname.
+
+### Step 3 - Confirm the node firmware's expectation
+
+```powershell
+cd C:\ncs_pouch_soil\pouch
+Get-ChildItem -Recurse -Filter .config examples\ble_gatt | Select-Object FullName
+Get-Content examples\ble_gatt\build\zephyr\.config |
+  Select-String "POUCH_SERVER_CERT_CN|POUCH_CA_CERT_FILENAME|POUCH_VALIDATE_SERVER_CERT"
+```
+
+For production, expect:
+
+```text
+CONFIG_POUCH_SERVER_CERT_CN="pouch.golioth.io"
+CONFIG_POUCH_CA_CERT_FILENAME="src/goliothrootx1.der"
+CONFIG_POUCH_VALIDATE_SERVER_CERT=y
+```
+
+If a branch flipped the CN to `pouch.golioth.dev`, that alone causes a mismatch.
+
+### Step 4 - Confirm what environment the gateway actually uses
+
+Build-time endpoint:
+
+```powershell
+Get-Content C:\ncs_pouch_soil\build-gateway-frdm_rw612\zephyr\.config |
+  Select-String "GOLIOTH_COAP_HOST_URI|POUCH_GATEWAY_SERVER_CERT_BUILTIN"
+```
+
+Expected for prod:
+
+```text
+CONFIG_GOLIOTH_COAP_HOST_URI="coaps://coap.golioth.io"
+# CONFIG_POUCH_GATEWAY_SERVER_CERT_BUILTIN is not set
+```
+
+Runtime project/instance — on the **gateway** serial shell:
+
+```text
+settings get golioth/psk-id
+```
+
+The id is `deviceId@projectId`. Confirm `projectId` is the project the node's
+device cert was provisioned into, on the **production** console
+(`console.golioth.io`). Also watch the gateway boot log for the host it connects
+to and `Golioth client connected`.
+
+## Known-good reference: the compiled CA
+
+For comparison against the node's `Pouch CA cert` log line and the `Received
+server cert chain` issuer, the production trust anchor currently compiled into
+the node (`pouch/src/goliothrootx1.der`, 548 bytes) decodes to:
+
+| Field | Value |
+|---|---|
+| Subject | `CN=Golioth Root X1, O="Golioth, Inc.", C=US` |
+| Issuer | `CN=Golioth Root X1, O="Golioth, Inc.", C=US` (self-signed root) |
+| Serial | `00EE8FA620F7C94862797617A8943FF43BE7287D` |
+| Valid from | `2024-11-19 10:52:34Z` |
+| Valid to | `2044-11-14 10:52:33Z` |
+| Signature alg | `sha384ECDSA` |
+| Public key | ECC (secp384r1) |
+| Basic Constraints | `Subject Type=CA` (CA:TRUE) |
+| Key Usage | Certificate Signing, CRL Signing |
+| SHA-1 thumbprint | `D453A7524E65C1C021AE63B925208477573ECE81` |
+| SHA-256 (DER) | `F0:3F:EC:5A:25:B8:D5:DD:A4:55:24:C8:71:A7:59:13:EF:55:FB:B6:94:08:E8:A2:DD:CC:93:5F:6F:CA:98:A0` |
+
+A correctly verifying setup requires the **issuer** of the received server cert
+chain to be exactly `CN=Golioth Root X1, O="Golioth, Inc.", C=US` and the leaf
+CN to be `pouch.golioth.io`. Anything else points to a dev/prod (or wrong-CA)
+mismatch.
+
+To re-derive this on Windows (no OpenSSL needed):
+
+```powershell
+$c = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2('C:\ncs_pouch_soil\pouch\src\goliothrootx1.der')
+"Subject: $($c.Subject)"; "Issuer: $($c.Issuer)"; "Serial: $($c.SerialNumber)"
+"NotBefore: $($c.NotBefore.ToString('u'))"; "NotAfter: $($c.NotAfter.ToString('u'))"
+$sha=[System.Security.Cryptography.SHA256]::Create()
+"SHA256-DER: " + ((($sha.ComputeHash($c.RawData))|ForEach-Object {$_.ToString('X2')}) -join ':')
+```
+
+## Fixing it
+
+### 1. Place the correct CA file
+
+For the production gateway that connects to `coap.golioth.io`, the node needs the
+production Golioth Root X1 CA certificate in DER format at the default path:
 
 ```text
 C:/ncs_pouch_soil/pouch/src/goliothrootx1.der
@@ -60,7 +235,7 @@ CONFIG_POUCH_CA_CERT_FILENAME="src/goliothrootx1.der"
 During the Zephyr build, `port/zephyr/CMakeLists.txt` finds that file, generates
 `pouch_ca_cert.inc`, and links the bytes into the node firmware.
 
-## 3. Rebuild the XIAO Node Firmware
+### 2. Rebuild the XIAO node firmware
 
 From PowerShell:
 
@@ -71,13 +246,8 @@ west update
 powershell -ExecutionPolicy Bypass -File scripts/build_ble_gatt_v010.ps1 -SkipWestUpdate
 ```
 
-The build helper builds `examples/ble_gatt` for:
-
-```text
-xiao_nrf54l15/nrf54l15/cpuapp
-```
-
-It uses `--no-sysbuild`, which is the current working path for this board.
+The build helper builds `examples/ble_gatt` for `xiao_nrf54l15/nrf54l15/cpuapp`
+using `--no-sysbuild`, which is the current working path for this board.
 
 The current stable soil sensor node image also uses:
 
@@ -88,14 +258,12 @@ CONFIG_GOLIOTH_SETTINGS=n
 CONFIG_GOLIOTH_OTA=n
 ```
 
-The larger Pouch stacks prevent the callback/uplink path from corrupting the
-node during soil sensor sync. `CONFIG_GOLIOTH_SETTINGS=y` currently reproduces a
+The larger Pouch stacks prevent the callback/uplink path from corrupting the node
+during soil sensor sync. `CONFIG_GOLIOTH_SETTINGS=y` currently reproduces a
 `pouch_work` crash after server certificate verification, so cloud Settings are
-disabled for the working soil sensor build. With Settings disabled, Golioth
-cannot send Settings-based commands to the node, but normal soil data uplinks
-continue to work.
+disabled for the working soil sensor build.
 
-## 4. Flash the XIAO Node
+### 3. Flash the XIAO node
 
 With the XIAO debugger connected:
 
@@ -104,7 +272,7 @@ pyocd flash -t nrf54l C:/ncs_pouch_soil/pouch/examples/ble_gatt/build/zephyr/zep
 pyocd reset -t nrf54l
 ```
 
-After reboot, the node should still show:
+After reboot, the node should show:
 
 ```text
 <inf> main: Credentials loaded
@@ -112,7 +280,7 @@ After reboot, the node should still show:
 <inf> main: Advertising started
 ```
 
-The XIAO LED also reports startup progress with blink groups:
+The XIAO LED reports startup progress with blink groups:
 
 ```text
 1 blink  - application started and LED GPIO initialized
@@ -124,12 +292,11 @@ The XIAO LED also reports startup progress with blink groups:
 
 If the LED stops before five blinks, check the serial log for the failing stage.
 
-## 5. Re-upload the Node Device Cert and Key if Needed
+### 4. Re-upload the node device cert and key if needed
 
 Flashing the app normally should not erase LittleFS, but if the filesystem was
-erased or reformatted, upload the node cert and key again.
-
-Close the COM8 serial terminal first, then run from PowerShell:
+erased or reformatted, upload the node cert and key again. Close the COM8 serial
+terminal first, then run from PowerShell:
 
 ```powershell
 cd C:/ncs_pouch_soil/pouch
@@ -145,9 +312,8 @@ smpmgr.exe --port COM8 --line-length 128 --line-buffers 2 file read-size /lfs1/c
 smpmgr.exe --port COM8 --line-length 128 --line-buffers 2 file read-size /lfs1/credentials/key.der
 ```
 
-Expected sizes for the two current XIAO certificates are `380` bytes for
-`crt.der` and `138` bytes for `key.der`. If LittleFS reformats after flashing,
-the node will stop at:
+Expected sizes are `380` bytes for `crt.der` and `138` bytes for `key.der`. If
+LittleFS reformats after flashing, the node stops at:
 
 ```text
 <err> main: Failed to load certificate (err -2)
@@ -155,7 +321,19 @@ the node will stop at:
 
 Re-upload the cert and key, then reset the node.
 
-## 6. Retry the Gateway Sync
+### 5. Make both ends agree on one environment
+
+If step 2 confirmed a prod/dev mismatch:
+
+- **Production (matches the current gateway build):** rebuild the node from a
+  clean build dir with `CONFIG_POUCH_SERVER_CERT_CN="pouch.golioth.io"` and
+  `CONFIG_POUCH_CA_CERT_FILENAME="src/goliothrootx1.der"`, and ensure the gateway
+  PSK belongs to a production-project device.
+- **Development:** point the gateway at `coaps://coap.golioth.dev` **and** rebuild
+  the node with `CONFIG_POUCH_SERVER_CERT_CN="pouch.golioth.dev"` plus the
+  matching dev root CA `.der` in `CONFIG_POUCH_CA_CERT_FILENAME`.
+
+### 6. Retry the gateway sync
 
 Reboot both boards:
 
@@ -169,16 +347,12 @@ Expected node behavior after the gateway connects:
 <inf> main: BT security changed to level 2
 ```
 
-The node should no longer print:
+The node should no longer print `Failed verifying server cert: 0x2700, 8` or
+`Missing server key`.
 
-```text
-<err> cert: Failed verifying server cert: 0x2700, 8
-<err> saead_session: Missing server key
-```
-
-The known-working production gateway path is to let the gateway download the
-server certificate chain from Golioth at runtime and send that chain to the node.
-The gateway config for the FRDM-RW612 WiFi build therefore keeps:
+The known-working production path is to let the gateway download the server
+certificate chain from Golioth at runtime and send that chain to the node, so the
+FRDM-RW612 WiFi gateway build keeps:
 
 ```text
 CONFIG_POUCH_GATEWAY_SERVER_CERT_BUILTIN=n
