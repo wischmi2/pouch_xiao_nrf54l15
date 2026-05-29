@@ -1,13 +1,32 @@
-# Pouch Node Server Certificate: Compiled CA and `0x2700, 8` Troubleshooting
+# Pouch Node Certificates: `0x2700, 8` (server cert) and `4.12` (device cert)
 
-This note covers the Pouch server-certificate trust model on the XIAO nRF54L15
-Pouch node, and how to diagnose and fix the TLS verification error:
+This note covers the two certificates a XIAO nRF54L15 Pouch node depends on, and
+how to diagnose and fix the two failures they cause.
 
 ```text
+# Failure A - node rejects the server cert (compiled-in CA problem)
 <err> cert: Failed verifying server cert: 0x2700, 8
 <err> saead_session: Missing server key
 <err> saead_uplink: Session key generation failed
+
+# Failure B - Golioth rejects the node's device cert (expired cert / CA)
+<inf> cert: Device cert cloud set CoAP response: 4.12
+<err> cert: Failed to set cert: 17
+<err> os: ***** HARD FAULT *****   (gateway crashes/reboot-loops)
 ```
+
+> **Quick decision guide.** A fully working node needs **both** halves right:
+> 1. **Good firmware** with the correct compiled-in CA, so the node trusts the
+>    server cert (no `0x2700, 8`) — see "Failure A" below.
+> 2. A **valid, Golioth-registered device cert** in LittleFS, so Golioth accepts
+>    the node identity (`2.05`, not `4.12`) — see the section
+>    **"Failure B: expired device cert"** below.
+>
+> In the field, the most common cause turned out to be **Failure B**: a
+> short-lived demo device cert (and its CA) expired, which looks like a re-flash
+> regression but is really a calendar problem. See the
+> **"Known-good healthy sync reference"** section for exactly what a working
+> system logs.
 
 ## What the error means
 
@@ -388,3 +407,199 @@ powershell -ExecutionPolicy Bypass -File scripts/build_ble_gatt_v010.ps1 -SkipWe
 If the gateway is changed to a non-production Golioth endpoint, such as a dev
 endpoint, the node must be built with the matching CA and expected server common
 name. The production defaults are for `coap.golioth.io` and `pouch.golioth.io`.
+
+# Failure B: expired device cert -> gateway `4.12` -> crash
+
+Everything above is "Failure A" (the node distrusts the **server** cert). There is
+a second, independent failure on the **device-identity** cert.
+
+The node stores its own identity cert/key in LittleFS
+(`/lfs1/credentials/crt.der`, `key.der`). The gateway reads that cert over BLE and
+registers it with Golioth. If the device cert (or the CA that signed it) has
+**expired** or is **not in the Golioth project**, Golioth rejects it:
+
+```text
+<inf> cert: Finishing device cert from node: len 380
+<inf> cert: Sending node device cert to Golioth gateway API
+<inf> cert: Device cert cloud set CoAP response: 4.12     # 4.12 = Precondition Failed
+<err> cert: Failed to set cert: 17
+<err> device_cert_gatt: Failed to finish device cert: -5
+<err> os: ***** HARD FAULT *****
+<err> os:   Bus fault on vector table read
+<err> os: Current thread: 0x... (coap_client)
+<err> fatal_error: Resetting system
+```
+
+Two important facts learned in the field:
+
+- **It looks like a re-flash regression but it is calendar-driven.** The demo
+  device certs and their CAs were issued with ~28-day validity. When they lapsed
+  (e.g. `chocolate-voiceless-mastodon` expired 2026-05-22, its
+  `chocolate-voiceless-mastodon-CA` also expired), every sync started returning
+  `4.12`. Re-flashing around the same time made it *look* causal.
+- **The gateway hard-faults on the rejection.** The `4.12` itself is a clean
+  cloud error, but the gateway firmware then bus-faults in the `coap_client`
+  thread and reboot-loops. This is a latent gateway bug (see the last section);
+  a valid cert avoids triggering it but does not fix it.
+
+> `4.12` is the **device** cert (LittleFS, Golioth side). `0x2700, 8` is the
+> **server** cert (compiled-in CA, node side). They are unrelated; a node can
+> pass one and fail the other.
+
+## You need both halves: firmware AND a valid device cert
+
+Real units observed (one Golioth project, `emerald-mature-damselfly`):
+
+| Node name | Firmware (server cert) | Device cert | Result |
+|---|---|---|---|
+| `chocolate-voiceless-mastodon` | good (verifies) | expired | `4.12` -> gateway crash |
+| `xiao-nrf54l15-two` | good (verifies) | expired | `4.12` -> gateway crash |
+| `xiao-nrf54l15-three` | bad (`0x2700, 8`) | valid | server cert never trusted |
+| `xiao-nrf54l15-four` | good (verifies) | **valid** | **works** |
+
+A working node = **good firmware** (Failure A clear) **+** a **valid, registered
+device cert** (Failure B clear).
+
+## Reading and checking a node's device cert over serial
+
+You can pull the device cert straight out of a running node's LittleFS over the
+shell/MCUmgr transport and check its expiry. On Windows, set `PYTHONUTF8=1` first
+or `smpmgr`'s progress spinner crashes with a `charmap`/`UnicodeEncodeError`.
+
+```powershell
+cd C:\ncs_pouch_soil\pouch
+$env:PYTHONUTF8='1'
+# size only (383 = three/four, 380 = two/xiao-pouch-device, 401 = chocolate)
+smpmgr --port COM17 --line-length 128 --line-buffers 2 file read-size /lfs1/credentials/crt.der
+# download and decode (no OpenSSL needed)
+smpmgr --port COM17 --line-length 128 --line-buffers 2 file download /lfs1/credentials/crt.der C:\ncs_pouch_soil\node_crt.der
+$c = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2('C:\ncs_pouch_soil\node_crt.der')
+"Subject: $($c.Subject)"; "Issuer: $($c.Issuer)"
+"Valid: $($c.NotBefore.ToString('u')) -> $($c.NotAfter.ToString('u'))"; "Expired: $((Get-Date) -gt $c.NotAfter)"
+```
+
+The subject encodes the Golioth identity: `CN=<device-name>, O=<project-id>`
+(for example `CN=xiao-nrf54l15-four, O=emerald-mature-damselfly`).
+
+## Fix B-1: provision a valid (already-issued) device cert
+
+If you already have a valid device cert whose CA is uploaded and unexpired in the
+Golioth project, just upload it to a **good-firmware** node and power-cycle:
+
+```powershell
+cd C:\ncs_pouch_soil\pouch
+$env:PYTHONUTF8='1'
+smpmgr --port COM17 --line-length 128 --line-buffers 2 file upload .\certs\xiao-nrf54l15-four\xiao-nrf54l15-four.crt.der /lfs1/credentials/crt.der
+smpmgr --port COM17 --line-length 128 --line-buffers 2 file upload .\certs\xiao-nrf54l15-four\xiao-nrf54l15-four.key.der /lfs1/credentials/key.der
+```
+
+Then **power-cycle BOTH boards**. This matters: rebooting the node gives it a new
+random BLE address, so the gateway has to re-pair, and the gateway may be in a
+30-second security cooldown or a hung post-crash state. Power-cycling both clears
+stale bonds and lets the gateway reconnect cleanly. (`kernel reboot` on just the
+node is often not enough.)
+
+## Fix B-2: generate a long-lived CA + device cert
+
+The demo certs expire fast. To stop this recurring, generate a long-lived CA and
+device cert (P-256/SHA-256, to match the node), upload the CA to your Golioth
+project's **Offline PKI**, and provision the device cert with Fix B-1.
+
+```bash
+# fresh CA (10y)
+openssl ecparam -name prime256v1 -genkey -noout -out ca-key.pem
+openssl req -x509 -new -nodes -key ca-key.pem -sha256 -days 3650 \
+  -subj "/C=US/CN=my-pouch-ca" -out ca-cert.pem
+
+# device key + CSR. CN = Golioth device name, O = Golioth project id.
+openssl ecparam -name prime256v1 -genkey -noout -out key.pem
+openssl req -new -key key.pem \
+  -subj "/C=US/O=emerald-mature-damselfly/CN=xiao-nrf54l15-four" -out dev.csr
+
+# sign (e.g. 5y) and convert to the DER form the node expects
+openssl x509 -req -in dev.csr -CA ca-cert.pem -CAkey ca-key.pem -CAcreateserial \
+  -days 1825 -sha256 -out crt.pem
+openssl x509 -in crt.pem -outform der -out crt.der
+openssl ec -in key.pem -outform der -out key.der
+```
+
+Then:
+
+1. Upload `ca-cert.pem` to the Golioth project (Offline PKI -> upload CA).
+2. Upload `crt.der` / `key.der` to the node with Fix B-1.
+3. Power-cycle both boards.
+
+> The node's compiled-in **server** CA (`goliothrootx1.der`) is unrelated and does
+> not need regenerating - it is Golioth's long-lived root (valid to 2044).
+
+# Known-good healthy sync reference
+
+This is exactly what a fully working system logs (node `xiao-nrf54l15-four`, good
+firmware `v0.1.0-221`, valid device cert, both boards power-cycled). Use it as the
+baseline to compare against.
+
+**Gateway (FRDM-RW612) - repeats cleanly every ~30s:**
+
+```text
+<inf> main: Connected: D2:B3:48:4F:7F:F7 (random)
+<inf> main: Pairing complete for D2:B3:48:4F:7F:F7 (random), bonded 1
+<inf> main: BT security changed for D2:B3:48:4F:7F:F7 (random) to level 2
+<inf> server_cert_gatt: Server cert already provisioned, skipping write
+<inf> cert: Finishing device cert from node: len 383
+<inf> cert: Sending node device cert to Golioth gateway API
+<inf> cert: Device cert cloud set callback: status 0, path device-cert
+<inf> cert: Device cert cloud set CoAP response: 2.05
+<inf> cert: Golioth accepted node device cert
+<inf> uplink: Sending uplink block 0: len 139, last 1, closed 1
+<inf> uplink: Delivered uplink block 0: path pouch, block_size 1024
+<inf> main: Disconnected: D2:B3:48:4F:7F:F7 (random), reason 0x16
+<inf> scan: Scanning successfully started
+```
+
+**Node (XIAO) - running its application:**
+
+```text
+<inf> main: Reading soil sensor ADC: device adc@d5000, channel 0, resolution 12
+<inf> main: Soil sensor ADC sample: raw 0, millivolts 0
+<inf> main: Writing soil sensor uplink: path .s/sensor, content_type 50, len 72
+<inf> glth_dispatch: Receiving Downlink entry on path /.c
+```
+
+## Success markers vs. broken states
+
+| Stage | Working | Broken |
+|---|---|---|
+| Server cert (node) | encrypted uplinks flow | `Failed verifying server cert: 0x2700, 8` |
+| Device cert (gateway -> cloud) | `2.05` / `Golioth accepted node device cert` | `4.12` / `Failed to set cert: 17` |
+| Gateway stability | clean `Disconnected reason 0x16`, keeps scanning | `HARD FAULT` -> `Resetting system` loop |
+| Data | `Delivered uplink block 0: path pouch` | never reached |
+
+Notes:
+
+- `Disconnected ... reason 0x16` is a clean gateway-initiated disconnect after a
+  successful sync (not a timeout/crash). `reason 0x08` is a supervision timeout
+  and `reason 0x3e` is a failed-to-establish/security failure.
+- `Soil sensor ADC sample: raw 0, millivolts 0` means comms are fine but the
+  moisture probe is reading nothing - check the probe wiring/insertion separately.
+
+# Latent gateway bug: hard fault on cloud rejection
+
+When Golioth returns a `4.xx` for the device cert, the gateway should log it and
+move on. Instead it bus-faults in the `coap_client` thread
+(`Faulting instruction address (r15/pc): 0x00000020`, `r14/lr: 0x00000000`) and
+resets, producing the reboot loop. Until the device-cert error path in the
+pouch gateway cert module is hardened, any cert expiry or cloud hiccup will wedge
+the gateway again even though the node side is fine.
+
+# Helper: reading serial logs
+
+The captures in this note were taken with a small PowerShell serial reader at
+`C:\ncs_pouch_soil\serial_io.ps1` (open the port, optionally send a shell command,
+print everything for N seconds). Node and gateway COM ports re-enumerate when
+boards are replugged, so list them first:
+
+```powershell
+[System.IO.Ports.SerialPort]::GetPortNames() | Sort-Object
+powershell -ExecutionPolicy Bypass -File C:\ncs_pouch_soil\serial_io.ps1 -Port COM12 -Seconds 50
+powershell -ExecutionPolicy Bypass -File C:\ncs_pouch_soil\serial_io.ps1 -Port COM17 -Send "kernel reboot" -Seconds 14
+```
