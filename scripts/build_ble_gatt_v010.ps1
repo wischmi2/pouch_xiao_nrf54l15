@@ -1,7 +1,7 @@
 param(
     [string]$WorkspaceRoot = "C:/ncs_pouch_soil",
     [string]$PouchRepoPath = "C:/ncs_pouch_soil/pouch",
-    [string]$Board = "nrf52840dk/nrf52840",
+    [string]$Board = "xiao_nrf54l15/nrf54l15/cpuapp",
     [switch]$SkipWestUpdate
 )
 
@@ -41,17 +41,18 @@ try {
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to query west boards."
         }
-        if (-not ($boardCheck -match "(?m)^$([regex]::Escape($Board))$")) {
+        $boardName = ($Board -split "/")[0]
+        if (-not ($boardCheck -match "(?m)^$([regex]::Escape($boardName))$")) {
             Write-Error "Board '$Board' is not available in this workspace."
             Write-Host "Tip: run 'west boards | Select-String xiao' to see available xiao boards."
             Write-Host "Known NCS nRF54 board available here: nrf54l15dk/nrf54l15/cpuapp"
             exit 1
         }
 
-        Write-Host "== Building ble_gatt example =="
+        Write-Host "== Building ble_gatt example (app-only, no sysbuild) =="
         Push-Location "examples/ble_gatt"
         try {
-            west build -b $Board --pristine
+            west build -b $Board --pristine --no-sysbuild
         }
         finally {
             Pop-Location

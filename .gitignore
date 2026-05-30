@@ -1,5 +1,6 @@
 build/
 .cache
+certs/
 .DS_Store
 .vscode
 twister-out*/
