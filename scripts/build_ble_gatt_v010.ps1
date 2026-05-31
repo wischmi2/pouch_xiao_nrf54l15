@@ -66,6 +66,23 @@ try {
         finally {
             Pop-Location
         }
+
+        $bin = Join-Path $PouchRepoPath "examples/ble_gatt/build/zephyr/zephyr.bin"
+        if (-not (Test-Path $bin)) {
+            throw "Build did not produce $bin"
+        }
+        $ascii = [System.Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($bin))
+        if ($ascii -notmatch "Golioth Root X1") {
+            throw "Built image missing embedded Golioth Root X1 CA"
+        }
+        if ($ascii -match "Zephyr OS v4\.3\.0") {
+            Write-Host "== Verified: Golioth Root X1 + Zephyr v4.3.0 (unit 2 match) =="
+        } elseif ($ascii -match "Zephyr OS v4\.3\.99") {
+            Write-Warning "Built image has Zephyr 4.3.99 — server cert may fail (0x2700). Use scripts/flash_unit2_golden.ps1 for unit-2 behavior."
+            Write-Host "== Verified: Golioth Root X1 present =="
+        } else {
+            throw "Built image missing expected Zephyr 4.3.x version string"
+        }
     }
     finally {
         Pop-Location

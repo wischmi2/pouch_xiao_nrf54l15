@@ -1,0 +1,20 @@
+--- a/modules/mbedtls/Kconfig
++++ b/modules/mbedtls/Kconfig
+@@ -28,12 +28,19 @@ choice MBEDTLS_IMPLEMENTATION
+ 
+ config MBEDTLS_BUILTIN
+ 	bool "Use Zephyr in-tree mbedTLS version"
++	depends on !DISABLE_MBEDTLS_BUILTIN
+ 	help
+ 	  Link with mbedTLS sources included with Zephyr distribution.
+ 	  Included mbedTLS version is well integrated with and supported
+ 	  by Zephyr, and the recommended choice for most users.
+ 
++config DISABLE_MBEDTLS_BUILTIN
++	bool
++	help
++	  Selected by nRF Security to use Nordic mbedTLS instead of Zephyr builtin.
++
+ config MBEDTLS_LIBRARY
+ 	bool "Use external mbedTLS library"
+ 	help

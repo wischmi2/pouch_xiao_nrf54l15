@@ -35,10 +35,6 @@ CONFIG_POUCH_UPLINK_PROCESSING_STACK_SIZE=8192
 
 CONFIG_MBEDTLS_HEAP_SIZE=9192
 
-# nRF54L + Golioth use nrf_security; legacy crypto avoids Zephyr/nrf Kconfig loop.
-CONFIG_MBEDTLS_LEGACY_CRYPTO_C=y
-CONFIG_MBEDTLS_USE_PSA_CRYPTO=y
-
 # Pouch server certificates chain to Golioth Root X1 using ECDSA/SHA-384
 # and secp384r1. Keep these explicit so the node can verify the gateway's
 # server certificate chain, not just parse it.
@@ -55,6 +51,7 @@ CONFIG_MBEDTLS_ECP_DP_SECP384R1_ENABLED=y
 CONFIG_MBEDTLS_PSA_P256M_DRIVER_ENABLED=n
 
 # Turn off default options to reduce ROM usage
+CONFIG_MBEDTLS_PKCS5_C=n
 
 # Match known-good unit 2/4 field behavior: auto-confirm pairing (no button).
 CONFIG_EXAMPLE_BT_AUTO_CONFIRM=y
