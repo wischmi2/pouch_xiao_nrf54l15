@@ -1,0 +1,30 @@
+Pouch commit: b539f2f
+Subject: Add XIAO nRF54L15 debug support and soil moisture percent.
+git describe: v0.1.0-223-gb539f2f
+Built: 2026-06-01 (workspace C:/ncs_pouch_soil)
+
+West manifest at this commit: NCS v3.2.3 + Golioth firmware SDK d703b1f
+After west update (verified):
+  nrf:    v3.2.3 (6f8485d289)
+  zephyr: ncs-v3.2.3 / ROM Zephyr OS v4.2.99-c4c75f71e709 (c4c75f71e70)
+
+Board: xiao_nrf54l15/nrf54l15/cpuapp
+Command: west build -b xiao_nrf54l15/nrf54l15/cpuapp --pristine --no-sysbuild -- "-DCONFIG_MBEDTLS_X509_REMOVE_INFO=n"
+
+Note: As-checked-in tree link-fails without the CMake workaround (cert.c uses
+mbedtls_x509_crt_info). This binary matches the verified workaround build.
+
+prj.conf vs de25234: OTA/settings off (from 00443f2 ancestor), soil_moisture_percent uplink.
+
+zephyr.bin: 340552 bytes
+zephyr.hex: included for programming
+
+ROM banners (from zephyr.bin):
+  nRF Connect SDK v3.2.3-6f8485d2890d
+  Zephyr OS v4.2.99-c4c75f71e709
+  Pouch SDK Version: v0.1.0-223-gb539f2f
+  Booting Pouch BLE GATT Example v1.0.0-b539f2f
+
+Field: last likely-good stack before 0x2700,8 reports (4 XIAO nodes + FRDM gateway).
+
+See docs/verified-workspace-snapshots.md and docs/build-summary.md.
