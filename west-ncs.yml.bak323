@@ -1,0 +1,30 @@
+manifest:
+  projects:
+    - name: nrf
+      revision: v3.2.3
+      url: http://github.com/nrfconnect/sdk-nrf
+      import:
+        name-allowlist:
+          - cmsis_6
+          - hal_nordic
+          - libmetal
+          - littlefs
+          - mbedtls
+          - mcuboot
+          - nrf
+          - nrfxlib
+          - oberon-psa-crypto
+          - open-amp
+          - segger
+          - tfm-mcuboot
+          - trusted-firmware-m
+          - zcbor
+          - zephyr
+
+    - name: golioth
+      path: modules/lib/golioth-firmware-sdk
+      revision: d703b1f8805c7584a44dabc31bdf09164637d888
+      url: https://github.com/golioth/golioth-firmware-sdk.git
+
+  self:
+    path: pouch

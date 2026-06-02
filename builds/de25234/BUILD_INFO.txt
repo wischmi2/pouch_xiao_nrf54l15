@@ -1,0 +1,22 @@
+Pouch commit: de25234
+Subject: Add XIAO LittleFS mount overlay.
+git describe: v0.1.0-216-gde25234
+Built: 2026-06-01 (workspace C:/ncs_pouch_soil)
+
+Board: xiao_nrf54l15/nrf54l15/cpuapp
+Command: west build -b xiao_nrf54l15/nrf54l15/cpuapp --pristine --no-sysbuild
+As-is build: success (no cert.c; no MBEDTLS_X509_REMOVE_INFO workaround)
+
+nrf: v3.2.3
+zephyr: ncs-v3.2.3 (ROM: Zephyr OS v4.2.99-c4c75f71e709)
+
+zephyr.bin: 337776 bytes
+zephyr.hex: included for programming
+
+ROM banners (from zephyr.bin):
+  nRF Connect SDK v3.2.3-6f8485d2890d
+  Zephyr OS v4.2.99-c4c75f71e709
+  Pouch SDK Version: v0.1.0-216-gde252340b8a3
+  Booting Pouch BLE GATT Example v1.0.0-de252340b8a3
+
+See docs/verified-workspace-snapshots.md and docs/build-summary.md.

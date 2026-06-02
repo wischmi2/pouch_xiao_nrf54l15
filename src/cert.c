@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2025 Golioth, Inc.
  *
  * SPDX-License-Identifier: Apache-2.0
@@ -10,6 +10,7 @@
 #include <psa/crypto.h>
 #include <pouch/port.h>
 #include <pouch/transport/certificate.h>
+#include <stdlib.h>
 #include <string.h>
 
 POUCH_LOG_REGISTER(cert, CONFIG_POUCH_COMMON_LOG_LEVEL);
@@ -61,6 +62,66 @@ static void log_cert_info(const char *label, const mbedtls_x509_crt *cert)
 #endif
 }
 
+static void log_chain_summary(const char *label, const mbedtls_x509_crt *chain)
+{
+    size_t depth = 0;
+
+    for (const mbedtls_x509_crt *crt = chain; crt != NULL; crt = crt->next)
+    {
+        char subj[128];
+        char iss[128];
+        int subj_len = mbedtls_x509_dn_gets(subj, sizeof(subj), &crt->subject);
+        int iss_len = mbedtls_x509_dn_gets(iss, sizeof(iss), &crt->issuer);
+
+        POUCH_LOG_ERR("%s[%zu]: subject=%s issuer=%s",
+                      label,
+                      depth,
+                      subj_len > 0 ? subj : "(empty)",
+                      iss_len > 0 ? iss : "(empty)");
+        depth++;
+    }
+
+    POUCH_LOG_ERR("%s: %zu certificate(s) in chain", label, depth);
+}
+
+static void log_verify_failure_details(mbedtls_x509_crt *chain, mbedtls_x509_crt *ca_cert)
+{
+    char subj[128];
+    char iss[128];
+
+    if (ca_cert != NULL)
+    {
+        int n = mbedtls_x509_dn_gets(subj, sizeof(subj), &ca_cert->subject);
+        POUCH_LOG_ERR("Trust anchor subject=%s", n > 0 ? subj : "(empty)");
+    }
+
+    if (chain == NULL)
+    {
+        return;
+    }
+
+    int n = mbedtls_x509_dn_gets(subj, sizeof(subj), &chain->subject);
+    int m = mbedtls_x509_dn_gets(iss, sizeof(iss), &chain->issuer);
+    POUCH_LOG_ERR("Leaf: subject=%s issuer=%s", n > 0 ? subj : "(empty)", m > 0 ? iss : "(empty)");
+
+    if (chain->next == NULL)
+    {
+        POUCH_LOG_ERR("No intermediate cert in chain (need E1)");
+        return;
+    }
+
+    n = mbedtls_x509_dn_gets(subj, sizeof(subj), &chain->next->subject);
+    m = mbedtls_x509_dn_gets(iss, sizeof(iss), &chain->next->issuer);
+    POUCH_LOG_ERR("Intermediate: subject=%s issuer=%s", n > 0 ? subj : "(empty)", m > 0 ? iss : "(empty)");
+
+    uint32_t e1_flags = 0;
+    int e1_ret = mbedtls_x509_crt_verify(chain->next, ca_cert, NULL, NULL, &e1_flags, NULL, NULL);
+
+    POUCH_LOG_ERR("Intermediate vs trust anchor only: ret=0x%x flags=0x%" PRIx32,
+                  (unsigned) -e1_ret,
+                  e1_flags);
+}
+
 static void log_verify_flags(uint32_t flags)
 {
 #if defined(MBEDTLS_X509_REMOVE_INFO)
@@ -89,7 +150,33 @@ static int parse_x509_cert(const struct pouch_cert *cert, mbedtls_x509_crt *out)
 
     mbedtls_x509_crt_init(out);
 
-    int ret = mbedtls_x509_crt_parse(out, cert->buffer, cert->size);
+    int ret;
+
+    /*
+     * mbedtls_x509_crt_parse() expects PEM buffers to include a trailing NUL.
+     * The generated pouch_ca_cert bytes are raw file contents, so add one when
+     * parsing PEM CA bundles.
+     */
+    if (cert->size >= 11 && memcmp(cert->buffer, "-----BEGIN ", 11) == 0)
+    {
+        uint8_t *pem = malloc(cert->size + 1);
+        if (pem == NULL)
+        {
+            POUCH_LOG_ERR("Failed allocating PEM parse buffer");
+            return -ENOMEM;
+        }
+
+        memcpy(pem, cert->buffer, cert->size);
+        pem[cert->size] = '\0';
+
+        ret = mbedtls_x509_crt_parse(out, pem, cert->size + 1);
+        free(pem);
+    }
+    else
+    {
+        ret = mbedtls_x509_crt_parse(out, cert->buffer, cert->size);
+    }
+
     if (ret != 0)
     {
         POUCH_LOG_ERR("Failed to parse certificate: 0x%x", -ret);
@@ -164,6 +251,7 @@ static int authenticate_server_cert(mbedtls_x509_crt *cert)
                       (uint32_t) -ret,
                       flags);
         log_verify_flags(flags);
+        log_verify_failure_details(cert, ca_cert);
         return -EPERM;
     }
 
@@ -222,7 +310,11 @@ int cert_server_set(const struct pouch_cert *certbuf)
         return -EINVAL;
     }
 
-    POUCH_LOG_INF("Received server cert chain (%zu bytes)", certbuf->size);
+    const bool is_pem = certbuf->size >= 11 && memcmp(certbuf->buffer, "-----BEGIN ", 11) == 0;
+
+    POUCH_LOG_ERR("Received server cert chain (%zu bytes, %s)",
+                  certbuf->size,
+                  is_pem ? "PEM" : "DER");
 
     mbedtls_x509_crt cert_chain;
     err = parse_x509_cert(certbuf, &cert_chain);
@@ -233,6 +325,7 @@ int cert_server_set(const struct pouch_cert *certbuf)
     }
 
     log_cert_info("Received server cert chain", &cert_chain);
+    log_chain_summary("Server chain", &cert_chain);
 
     if (IS_ENABLED(CONFIG_POUCH_VALIDATE_SERVER_CERT))
     {

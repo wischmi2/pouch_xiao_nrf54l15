@@ -36,21 +36,20 @@
         "panel": "dedicated",
         "clear": true
       },
-      "problemMatcher": [
-        {
-          "owner": "custom",
-          "pattern": [
-            {
-              "regexp": "^(.*)$",
-              "message": 1
-            }
-          ],
-          "background": {
-            "activeOnStart": true,
-            "endsPattern": "Listening on port 3333 for gdb connections"
-          }
+      "problemMatcher": {
+        "owner": "custom",
+        "pattern": {
+          "regexp": "^(.*)\\s(\\d+):\\s(.*)$",
+          "file": 1,
+          "line": 2,
+          "message": 3
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".",
+          "endsPattern": "Listening on port 3333 for gdb connections"
         }
-      ]
+      }
     }
   ]
 }

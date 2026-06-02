@@ -21,7 +21,6 @@ config EXAMPLE_CREDENTIALS_DIR
     help
       Directory on mounted file system containing credentials.
 
-# This option is used only for automated tests
 config EXAMPLE_BT_AUTO_CONFIRM
-	bool
+	bool "Automatically confirm the BLE pairing passkey"
 	default y if BOARD_NRF52_BSIM_NATIVE
