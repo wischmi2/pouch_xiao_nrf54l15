@@ -224,12 +224,16 @@ CONFIG_PSA_WANT_ALG_SHA_384=y
 CONFIG_MBEDTLS_ECP_DP_SECP384R1_ENABLED=y
 ```
 
-Flash:
+Flash (two probes connected — use long flags + env so pyOCD does not prompt for a number):
 
 ```powershell
-pyocd flash -u WYKL7D7EW6T3VCGIXBB6CHE433NVRQIN -t nrf54l build\zephyr\zephyr.hex
-pyocd reset -t nrf54l
+$env:PYOCD_PROBE = "cmsisdap:WYKL7D7EW6T3VCGIXBB6CHE433NVRQIN"
+cd C:\Users\Brian\ncs\pouch\examples\ble_gatt
+pyocd flash --target nrf54l --uid WYKL7D7EW6T3VCGIXBB6CHE433NVRQIN build\zephyr\zephyr.hex
+pyocd reset --target nrf54l --uid WYKL7D7EW6T3VCGIXBB6CHE433NVRQIN
 ```
+
+If pyOCD still lists probes interactively, pick **0** (Espressif CMSIS-DAP / XIAO), not **1** (J-Link / gateway).
 
 Node still needs LittleFS device creds (`/lfs1/credentials/crt.der`, `key.der`) — see `docs/pouch-node-compiled-ca.md`.
 
