@@ -10,3 +10,8 @@ sdkconfig.old
 *.py[cod]
 *.egg
 certs/
+
+# Cert troubleshooting experiments (production uses src/goliothrootx1.der)
+src/isrgrootx1.der
+src/isrg_golioth_ca.der
+src/gateway/_tmp/
