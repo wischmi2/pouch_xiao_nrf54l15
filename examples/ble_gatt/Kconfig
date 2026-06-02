@@ -24,3 +24,11 @@ config EXAMPLE_CREDENTIALS_DIR
 config EXAMPLE_BT_AUTO_CONFIRM
 	bool "Automatically confirm the BLE pairing passkey"
 	default y if BOARD_NRF52_BSIM_NATIVE
+
+config EXAMPLE_BATTERY_POWER_LED
+	bool "Visible boot LED sequence and heartbeat (battery-only builds)"
+	default n
+	help
+	  When UART is disabled there is no serial log. Enable a solid LED at
+	  boot, slower stage blinks, and a slow heartbeat after advertising
+	  so LiPo-only power can be confirmed without USB serial.

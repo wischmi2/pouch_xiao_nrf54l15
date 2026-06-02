@@ -34,6 +34,19 @@ static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET_OR(DT_ALIAS(led0), gpios
 static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET_OR(DT_ALIAS(sw0), gpios, {});
 static struct gpio_callback button_cb_data;
 static bool led_ready;
+
+#if IS_ENABLED(CONFIG_EXAMPLE_BATTERY_POWER_LED)
+static struct k_work_delayable power_led_heartbeat_work;
+static struct k_work_delayable power_led_heartbeat_off_work;
+
+#define BLINK_ON_MS 300
+#define BLINK_OFF_MS 300
+#define BLINK_STAGE_PAUSE_MS 800
+#else
+#define BLINK_ON_MS 150
+#define BLINK_OFF_MS 150
+#define BLINK_STAGE_PAUSE_MS 500
+#endif
 static struct k_work manual_uplink_work;
 static struct k_mutex manual_uplink_lock;
 static char manual_uplink_payload[96];
@@ -311,6 +324,55 @@ static void setup_led(void)
     led_ready = true;
 }
 
+#if IS_ENABLED(CONFIG_EXAMPLE_BATTERY_POWER_LED)
+static void power_led_boot_indicator(void)
+{
+    if (!led_ready)
+    {
+        return;
+    }
+
+    /* Solid on ~1 s: power present and main() reached (no UART in battery builds). */
+    gpio_pin_set_dt(&led, 1);
+    k_msleep(1000);
+    gpio_pin_set_dt(&led, 0);
+    k_msleep(BLINK_STAGE_PAUSE_MS);
+}
+
+static void power_led_heartbeat_off_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+
+    if (led_ready)
+    {
+        gpio_pin_set_dt(&led, 0);
+    }
+
+    k_work_schedule(&power_led_heartbeat_work, K_SECONDS(4));
+}
+
+static void power_led_heartbeat_on_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+
+    if (!led_ready)
+    {
+        k_work_schedule(&power_led_heartbeat_work, K_SECONDS(4));
+        return;
+    }
+
+    gpio_pin_set_dt(&led, 1);
+    k_work_schedule(&power_led_heartbeat_off_work, K_MSEC(200));
+}
+
+static void power_led_heartbeat_start(void)
+{
+    k_work_init_delayable(&power_led_heartbeat_work, power_led_heartbeat_on_handler);
+    k_work_init_delayable(&power_led_heartbeat_off_work, power_led_heartbeat_off_handler);
+    k_work_schedule(&power_led_heartbeat_work, K_SECONDS(2));
+}
+#endif
+
 static void blink_stage(uint8_t count)
 {
     if (!led_ready)
@@ -323,13 +385,37 @@ static void blink_stage(uint8_t count)
     for (uint8_t i = 0; i < count; i++)
     {
         gpio_pin_set_dt(&led, 1);
-        k_msleep(150);
+        k_msleep(BLINK_ON_MS);
         gpio_pin_set_dt(&led, 0);
-        k_msleep(150);
+        k_msleep(BLINK_OFF_MS);
     }
 
-    k_msleep(500);
+    k_msleep(BLINK_STAGE_PAUSE_MS);
 }
+
+#if IS_ENABLED(CONFIG_EXAMPLE_BATTERY_POWER_LED)
+/** Three rapid bursts — boot failed before stage 3 (usually missing credentials). */
+static void blink_boot_error(void)
+{
+    if (!led_ready)
+    {
+        return;
+    }
+
+    for (int burst = 0; burst < 3; burst++)
+    {
+        for (int i = 0; i < 5; i++)
+        {
+            gpio_pin_set_dt(&led, 1);
+            k_msleep(80);
+            gpio_pin_set_dt(&led, 0);
+            k_msleep(80);
+        }
+
+        k_msleep(400);
+    }
+}
+#endif
 
 static void manual_uplink_work_handler(struct k_work *work)
 {
@@ -408,11 +494,17 @@ int main(void)
     k_work_init(&manual_uplink_work, manual_uplink_work_handler);
 
     setup_led();
+#if IS_ENABLED(CONFIG_EXAMPLE_BATTERY_POWER_LED)
+    power_led_boot_indicator();
+#endif
     blink_stage(1);
 
     int err = ble_peripheral_init();
     if (err)
     {
+#if IS_ENABLED(CONFIG_EXAMPLE_BATTERY_POWER_LED)
+        blink_boot_error();
+#endif
         return err;
     }
     blink_stage(2);
@@ -420,6 +512,9 @@ int main(void)
     err = setup_pouch();
     if (err)
     {
+#if IS_ENABLED(CONFIG_EXAMPLE_BATTERY_POWER_LED)
+        blink_boot_error();
+#endif
         return err;
     }
     blink_stage(3);
@@ -432,14 +527,18 @@ int main(void)
     err = ble_peripheral_start();
     if (err)
     {
+#if IS_ENABLED(CONFIG_EXAMPLE_BATTERY_POWER_LED)
+        blink_boot_error();
+#endif
         return err;
     }
 
     LOG_INF("Advertising started");
 
-    // Request a gateway right away:
-    ble_peripheral_request_gateway(true);
     blink_stage(5);
+#if IS_ENABLED(CONFIG_EXAMPLE_BATTERY_POWER_LED)
+    power_led_heartbeat_start();
+#endif
 
     return 0;
 }

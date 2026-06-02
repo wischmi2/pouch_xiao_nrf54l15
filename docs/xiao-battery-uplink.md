@@ -17,6 +17,13 @@ Soil moisture continues to use `.s/sensor` unchanged.
 
 Reference: [Seeed XIAO nRF54L15 battery section](https://wiki.seeedstudio.com/xiao_nrf54l15_sense_getting_started/#battery-powered-board)
 
+Hardware hookup, automatic charging (SGM40567), and what firmware does **not** control:
+[xiao-battery-hardware-and-charging.md](xiao-battery-hardware-and-charging.md).
+
+**Verified workflow (UART creds → battery image → Golioth):**
+[xiao-battery-hardware-and-charging.md#verified-end-to-end-workflow-what-worked](xiao-battery-hardware-and-charging.md#verified-end-to-end-workflow-what-worked).
+Dual-image build: [`scripts/build_ble_gatt_xiao_dual.ps1`](../scripts/build_ble_gatt_xiao_dual.ps1).
+
 ## Branch
 
 ```powershell
@@ -111,9 +118,15 @@ View in the Golioth console under the device stream/lightDB path for `.s/battery
 ## Battery-only power (optional)
 
 If the board fails to boot on LiPo with USB serial enabled, Seeed recommends disabling UART
-in the default `prj.conf` and using a `prj_uart.conf` overlay only for USB bench debugging.
-See the wiki “Scenario A / Scenario B” under battery-powered board. USB bench testing for
-this feature does not require that split.
+for field deploy. See [xiao-battery-hardware-and-charging.md](xiao-battery-hardware-and-charging.md)
+(**UART and battery-only boot**) and build with:
+
+```powershell
+west build -b xiao_nrf54l15/nrf54l15/cpuapp --pristine --no-sysbuild -- `
+  -DEXTRA_CONF_FILE=prj_battery.conf
+```
+
+USB bench testing uses the default `prj.conf` (Scenario A).
 
 ## Files touched
 

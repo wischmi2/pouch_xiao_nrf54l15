@@ -7,4 +7,26 @@ Pre-built XIAO nRF54L15 (`ble_gatt`) images keyed by **Pouch commit SHA**. Each 
 | [`de25234/`](de25234/) | `de25234` (`v0.1.0-216`) | Last commit **before** `cert.c` / link workaround; NCS 3.2.3 + Zephyr 4.2.99 |
 | [`b539f2f/`](b539f2f/) | `b539f2f` (`v0.1.0-223`) | Last likely-good field stack; soil moisture **percent**; build with `CONFIG_MBEDTLS_X509_REMOVE_INFO=n` |
 
-Flash `zephyr.bin` or `zephyr.hex` with your usual XIAO app-only flow (see `docs/v0.1.0-build-steps.md` §8–9 on `soil_sensor`).
+## XIAO dual flash images (UART + battery)
+
+Rebuild both with:
+
+```powershell
+.\scripts\build_ble_gatt_xiao_dual.ps1
+```
+
+| Folder | Use when |
+|--------|----------|
+| [`xiao-ble-gatt-uart/`](xiao-ble-gatt-uart/) | **Scenario A** — USB connected: flash, serial logs, `smpmgr` credential upload |
+| [`xiao-ble-gatt-battery/`](xiao-ble-gatt-battery/) | **Scenario B** — LiPo-only field deploy (no UART) |
+
+Flash from `examples/ble_gatt`:
+
+```powershell
+west flash --hex-file ..\..\builds\xiao-ble-gatt-uart\zephyr.hex
+west flash --hex-file ..\..\builds\xiao-ble-gatt-battery\zephyr.hex
+```
+
+Typical workflow: flash **uart** → upload `crt.der` / `key.der` → flash **battery**.
+
+See [`docs/xiao-battery-hardware-and-charging.md`](../docs/xiao-battery-hardware-and-charging.md).

@@ -11,11 +11,37 @@ LOG_MODULE_REGISTER(example_ble_peripheral);
 
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
+#include <zephyr/devicetree.h>
+#include <zephyr/drivers/gpio.h>
 
 #include <pouch/transport/gatt/common/types.h>
 #include <pouch/types.h>
 
 static struct bt_conn *default_conn;
+
+#if IS_ENABLED(CONFIG_EXAMPLE_BATTERY_POWER_LED)
+static const struct gpio_dt_spec connect_led = GPIO_DT_SPEC_GET_OR(DT_ALIAS(led0), gpios, {});
+
+static void connect_led_work_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+
+    if (!gpio_is_ready_dt(&connect_led))
+    {
+        return;
+    }
+
+    for (int i = 0; i < 2; i++)
+    {
+        gpio_pin_set_dt(&connect_led, 1);
+        k_msleep(500);
+        gpio_pin_set_dt(&connect_led, 0);
+        k_msleep(200);
+    }
+}
+
+K_WORK_DEFINE(connect_led_work, connect_led_work_handler);
+#endif
 
 static struct pouch_gatt_adv service_data = POUCH_GATT_ADV_DATA_INIT;
 
@@ -35,6 +61,9 @@ static void connected(struct bt_conn *conn, uint8_t err)
 
     LOG_DBG("Connected");
     default_conn = conn;
+#if IS_ENABLED(CONFIG_EXAMPLE_BATTERY_POWER_LED)
+    k_work_submit(&connect_led_work);
+#endif
 }
 
 static void sync_request_work_handler(struct k_work *work)
@@ -53,8 +82,7 @@ static void resume_advertising(struct k_work *work)
         return;
     }
 
-    // Although advertising resumes right away, we don't have to request a gateway.
-    // Schedule the gateway flag to be set at a later time:
+    ble_peripheral_request_gateway(true);
     k_work_schedule(&sync_request_work, K_SECONDS(CONFIG_EXAMPLE_SYNC_PERIOD_S));
 }
 K_WORK_DEFINE(resume_work, resume_advertising);
@@ -157,6 +185,7 @@ int ble_peripheral_init(void)
 
 int ble_peripheral_start(void)
 {
-    pouch_gatt_adv_req_sync(&service_data, false);
+    /* Gateway only connects when POUCH_GATT_ADV_FLAG_SYNC_REQUEST is set in adv data. */
+    pouch_gatt_adv_req_sync(&service_data, true);
     return bt_le_adv_start(BT_LE_ADV_CONN_FAST_2, ad, ARRAY_SIZE(ad), NULL, 0);
 }

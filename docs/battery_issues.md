@@ -246,6 +246,7 @@ remains the known-good baseline.
 
 ## Related docs
 
+- [xiao-battery-hardware-and-charging.md](xiao-battery-hardware-and-charging.md) — LiPo hookup, charger IC, USB vs battery power
 - [xiao-battery-uplink.md](xiao-battery-uplink.md) — feature runbook
 - [v0.1.0-build-steps.md](v0.1.0-build-steps.md) — NCS / XIAO build environment
 - [Seeed wiki — battery-powered board](https://wiki.seeedstudio.com/xiao_nrf54l15_sense_getting_started/#battery-powered-board)
