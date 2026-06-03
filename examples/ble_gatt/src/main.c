@@ -524,7 +524,7 @@ int main(void)
     setup_battery();
     blink_stage(4);
 
-    err = ble_peripheral_start();
+    err = ble_peripheral_start(true);
     if (err)
     {
 #if IS_ENABLED(CONFIG_EXAMPLE_BATTERY_POWER_LED)

@@ -293,12 +293,28 @@ west build -b xiao_nrf54l15/nrf54l15/cpuapp --pristine --no-sysbuild
 west build -b xiao_nrf54l15/nrf54l15/cpuapp --pristine --no-sysbuild -- "-DEXTRA_CONF_FILE=prj_battery.conf"
 ```
 
+### Flash tool: prefer pyOCD (not OpenOCD)
+
+This repo’s bench workflow uses **pyOCD** on the Seeed CMSIS-DAP debugger (`-t nrf54l`).
+**Avoid `west flash` alone** on this board: Zephyr’s default **OpenOCD** runner may run
+**`nrf54l_mass_erase`** when the chip reports AP lock, which **wipes all flash including
+LittleFS credentials**.
+
+```powershell
+.\scripts\flash_xiao_pyocd.ps1 -Variant uart
+.\scripts\flash_xiao_pyocd.ps1 -Variant battery
+# Optional: $env:PYOCD_PROBE_UID = "<CMSIS-DAP unique id from pyocd list>"
+```
+
+See also [`scripts/flash_xiao_pyocd.ps1`](../scripts/flash_xiao_pyocd.ps1) and
+[`docs/fix-cert-verify-2700-8.md`](fix-cert-verify-2700-8.md).
+
 ### Step 1 — Flash UART image and upload credentials
 
 1. Connect **XIAO debugger** (SWD). Flash Scenario A:
 
    ```powershell
-   west flash --skip-rebuild --hex-file C:\Users\Brian\pouch_xiao_nrf54l15\builds\xiao-ble-gatt-uart\zephyr.hex
+   .\scripts\flash_xiao_pyocd.ps1 -Variant uart
    ```
 
 2. Open serial (e.g. COM7/COM9, 115200). Confirm boot logs through **`Advertising started`**
@@ -318,11 +334,12 @@ west build -b xiao_nrf54l15/nrf54l15/cpuapp --pristine --no-sysbuild -- "-DEXTRA
 ### Step 2 — Flash battery image (keep credentials)
 
 ```powershell
-west flash --skip-rebuild --hex-file C:\Users\Brian\pouch_xiao_nrf54l15\builds\xiao-ble-gatt-battery\zephyr.hex
+.\scripts\flash_xiao_pyocd.ps1 -Variant battery
 ```
 
-If OpenOCD does **not** report mass erase / AP recovery, LittleFS credentials usually **survive**
-this flash. If credentials were wiped, repeat Step 1.
+pyOCD programs by **sector** and does **not** use OpenOCD’s automatic full-chip recover, so
+LittleFS credentials usually **survive** battery re-flash. If credentials were wiped anyway,
+repeat Step 1.
 
 ### Step 3 — What success looks like (no serial on Scenario B)
 
@@ -372,7 +389,8 @@ These are in `ble_peripheral.c` / `main.c` on the working branch — **do not re
    battery builds. The stock Zephyr board DTS defines those nodes; leave them alone.
 
 `prj_battery.conf` additionally sets `CONFIG_BT_CTLR_TX_PWR_PLUS_8=y` for stronger advertising
-on battery power.
+on battery power. Uplink interval is controlled by `CONFIG_EXAMPLE_SYNC_PERIOD_S` (default **30**
+seconds in `prj.conf`) — time after a gateway session ends before the node requests sync again.
 
 ### Gateway log — normal vs worrying
 
@@ -430,7 +448,7 @@ unless your application drives one.
 
 - [ ] Serial: `Battery ADC and regulator configured` at boot
 - [ ] Serial: `Battery sample: divider_mv ..., battery_mv ..., percent ...` each sync
-- [ ] Golioth: `.s/battery` updates on gateway sync (~every 20 s after sync)
+- [ ] Golioth: `.s/battery` updates on gateway sync (~every 30 s; `CONFIG_EXAMPLE_SYNC_PERIOD_S`)
 
 ### Battery-only (Scenario B)
 

@@ -51,6 +51,9 @@ static struct bt_data ad[] = {
     BT_DATA(BT_DATA_NAME_COMPLETE, CONFIG_BT_DEVICE_NAME, sizeof(CONFIG_BT_DEVICE_NAME) - 1),
 };
 
+static void sync_request_work_handler(struct k_work *work);
+K_WORK_DELAYABLE_DEFINE(sync_request_work, sync_request_work_handler);
+
 static void connected(struct bt_conn *conn, uint8_t err)
 {
     if (err)
@@ -61,6 +64,11 @@ static void connected(struct bt_conn *conn, uint8_t err)
 
     LOG_DBG("Connected");
     default_conn = conn;
+
+    /* Stop asking for gateway while connected (adv may resume with stale flags). */
+    k_work_cancel_delayable(&sync_request_work);
+    ble_peripheral_request_gateway(false);
+
 #if IS_ENABLED(CONFIG_EXAMPLE_BATTERY_POWER_LED)
     k_work_submit(&connect_led_work);
 #endif
@@ -68,31 +76,29 @@ static void connected(struct bt_conn *conn, uint8_t err)
 
 static void sync_request_work_handler(struct k_work *work)
 {
+    ARG_UNUSED(work);
+
     LOG_DBG("Requesting Gateway sync");
     ble_peripheral_request_gateway(true);
 }
-K_WORK_DELAYABLE_DEFINE(sync_request_work, sync_request_work_handler);
-
-static void resume_advertising(struct k_work *work)
-{
-    int err = ble_peripheral_start();
-    if (err)
-    {
-        LOG_ERR("Failed to start advertising (err: %d)", err);
-        return;
-    }
-
-    ble_peripheral_request_gateway(true);
-    k_work_schedule(&sync_request_work, K_SECONDS(CONFIG_EXAMPLE_SYNC_PERIOD_S));
-}
-K_WORK_DEFINE(resume_work, resume_advertising);
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
+    ARG_UNUSED(conn);
+
     LOG_DBG("Disconnected (reason 0x%02x)", reason);
 
     default_conn = NULL;
-    k_work_submit(&resume_work);
+
+    /*
+     * Clear sync-request immediately. The stack often resumes advertising with the
+     * previous payload before resume_work runs; bonded gateways then reconnect in
+     * milliseconds instead of waiting CONFIG_EXAMPLE_SYNC_PERIOD_S.
+     */
+    k_work_cancel_delayable(&sync_request_work);
+    ble_peripheral_request_gateway(false);
+
+    k_work_schedule(&sync_request_work, K_SECONDS(CONFIG_EXAMPLE_SYNC_PERIOD_S));
 }
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {
@@ -147,8 +153,15 @@ static struct bt_conn_auth_cb auth_cb_display = {
 
 void ble_peripheral_request_gateway(bool request)
 {
+    int err;
+
     pouch_gatt_adv_req_sync(&service_data, request);
-    bt_le_adv_update_data(ad, ARRAY_SIZE(ad), NULL, 0);
+    err = bt_le_adv_update_data(ad, ARRAY_SIZE(ad), NULL, 0);
+    if (err == -EAGAIN)
+    {
+        /* Not advertising yet; start with the requested sync flag. */
+        (void) ble_peripheral_start(request);
+    }
 }
 
 void ble_peripheral_button_handler(void)
@@ -183,9 +196,8 @@ int ble_peripheral_init(void)
     return 0;
 }
 
-int ble_peripheral_start(void)
+int ble_peripheral_start(bool request_sync)
 {
-    /* Gateway only connects when POUCH_GATT_ADV_FLAG_SYNC_REQUEST is set in adv data. */
-    pouch_gatt_adv_req_sync(&service_data, true);
+    pouch_gatt_adv_req_sync(&service_data, request_sync);
     return bt_le_adv_start(BT_LE_ADV_CONN_FAST_2, ad, ARRAY_SIZE(ad), NULL, 0);
 }

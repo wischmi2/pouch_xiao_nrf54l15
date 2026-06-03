@@ -20,12 +20,14 @@ Rebuild both with:
 | [`xiao-ble-gatt-uart/`](xiao-ble-gatt-uart/) | **Scenario A** — USB connected: flash, serial logs, `smpmgr` credential upload |
 | [`xiao-ble-gatt-battery/`](xiao-ble-gatt-battery/) | **Scenario B** — LiPo-only field deploy (no UART) |
 
-Flash from `examples/ble_gatt`:
+Flash with **pyOCD** (recommended — preserves LittleFS better than OpenOCD `west flash`):
 
 ```powershell
-west flash --hex-file ..\..\builds\xiao-ble-gatt-uart\zephyr.hex
-west flash --hex-file ..\..\builds\xiao-ble-gatt-battery\zephyr.hex
+.\scripts\flash_xiao_pyocd.ps1 -Variant uart
+.\scripts\flash_xiao_pyocd.ps1 -Variant battery
 ```
+
+OpenOCD via `west flash` can trigger **mass erase** on AP-lock recover and wipe credentials.
 
 Typical workflow: flash **uart** → upload `crt.der` / `key.der` → flash **battery**.
 

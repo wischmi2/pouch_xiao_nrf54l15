@@ -26,5 +26,7 @@ int ble_peripheral_init(void);
 
 /**
  * Start Bluetooth advertising.
+ *
+ * @param request_sync If true, set POUCH_GATT_ADV_FLAG_SYNC_REQUEST so the gateway connects.
  */
-int ble_peripheral_start(void);
+int ble_peripheral_start(bool request_sync);

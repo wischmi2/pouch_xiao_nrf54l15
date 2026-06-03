@@ -10,10 +10,10 @@ source "$ZEPHYR_BASE/Kconfig"
 
 config EXAMPLE_SYNC_PERIOD_S
     int "Sync Period"
-    default 20
+    default 30
     help
-      The time, in seconds, after a sync to wait before requesting a sync from
-      a gateway.
+      Seconds to wait after a gateway session ends before setting the sync-request
+      flag in advertisements again (minimum interval between uplink attempts).
 
 config EXAMPLE_CREDENTIALS_DIR
     string "Directory containing credentials"
