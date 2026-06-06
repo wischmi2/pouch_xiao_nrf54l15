@@ -79,6 +79,19 @@
 	};
 };
 
+/*
+ * RF switch (P2.03 rfsw_pwr, P2.05 rfsw_ctl) — match upstream XIAO nRF54L15 board DTS.
+ * rfsw_ctl ACTIVE_LOW + boot-on selects ceramic at reset; app can disable for IPEX.
+ */
+&rfsw_ctl {
+	enable-gpios = <&gpio2 5 GPIO_ACTIVE_LOW>;
+	regulator-boot-on;
+};
+
+&rfsw_pwr {
+	regulator-boot-on;
+};
+
 &adc {
 	status = "okay";
 	#address-cells = <1>;

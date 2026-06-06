@@ -20,6 +20,16 @@ void ble_peripheral_button_handler(void);
 void ble_peripheral_request_gateway(bool request);
 
 /**
+ * Select internal ceramic or external IPEX antenna (XIAO nRF54L15 RF switch).
+ *
+ * @param external true for external IPEX, false for on-board ceramic.
+ */
+int ble_peripheral_antenna_set(bool external);
+
+/** Return true when the external IPEX antenna path is selected. */
+bool ble_peripheral_antenna_is_external(void);
+
+/**
  * Initialize application Bluetooth module.
  */
 int ble_peripheral_init(void);

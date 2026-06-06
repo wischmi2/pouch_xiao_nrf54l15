@@ -384,9 +384,11 @@ These are in `ble_peripheral.c` / `main.c` on the working branch — **do not re
 4. **Do not add `CONFIG_BT_SETTINGS`** without a proper NVS partition layout — previously caused
    `fs_nvs: No GC Done marker` and **USAGE FAULT** at boot.
 
-5. **Do not manually drive `rfsw_pwr` / `rfsw_ctl`** in application code — not required for this
-   Pouch example; an experimental RF-switch patch **broke** gateway connectivity on UART and
-   battery builds. The stock Zephyr board DTS defines those nodes; leave them alone.
+5. **RF antenna switch** — `ble_peripheral_init()` enables `rfsw_pwr` and selects ceramic
+   (default) or IPEX via `rfsw_ctl` (see overlay `regulator-boot-on` + `GPIO_ACTIVE_LOW` on
+   ctl). Build-time default: `CONFIG_EXAMPLE_ANTENNA_EXTERNAL=n`. Runtime:
+   `ble_peripheral_antenna_set(true|false)`. Do **not** enable both regulators with the old
+   `GPIO_ACTIVE_HIGH` ctl polarity — that routes BLE to IPEX with no external antenna attached.
 
 `prj_battery.conf` additionally sets `CONFIG_BT_CTLR_TX_PWR_PLUS_8=y` for stronger advertising
 on battery power. Uplink interval is controlled by `CONFIG_EXAMPLE_SYNC_PERIOD_S` (default **30**

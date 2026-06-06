@@ -32,3 +32,11 @@ config EXAMPLE_BATTERY_POWER_LED
 	  When UART is disabled there is no serial log. Enable a solid LED at
 	  boot, slower stage blinks, and a slow heartbeat after advertising
 	  so LiPo-only power can be confirmed without USB serial.
+
+config EXAMPLE_ANTENNA_EXTERNAL
+	bool "Select external IPEX antenna at boot"
+	default n
+	help
+	  Default (n): on-board ceramic antenna (P2.05 LOW via rfsw_ctl).
+	  When enabled: external antenna connector (P2.05 HIGH).
+	  Runtime switching is available via ble_peripheral_antenna_set().

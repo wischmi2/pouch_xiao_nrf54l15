@@ -13,11 +13,91 @@ LOG_MODULE_REGISTER(example_ble_peripheral);
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/regulator.h>
 
 #include <pouch/transport/gatt/common/types.h>
 #include <pouch/types.h>
 
 static struct bt_conn *default_conn;
+
+#if DT_NODE_EXISTS(DT_NODELABEL(rfsw_pwr))
+static const struct device *const rfsw_pwr_dev = DEVICE_DT_GET(DT_NODELABEL(rfsw_pwr));
+#endif
+#if DT_NODE_EXISTS(DT_NODELABEL(rfsw_ctl))
+static const struct device *const rfsw_ctl_dev = DEVICE_DT_GET(DT_NODELABEL(rfsw_ctl));
+#endif
+
+#if DT_NODE_EXISTS(DT_NODELABEL(rfsw_pwr)) || DT_NODE_EXISTS(DT_NODELABEL(rfsw_ctl))
+static bool antenna_external;
+#endif
+
+#if DT_NODE_EXISTS(DT_NODELABEL(rfsw_pwr)) || DT_NODE_EXISTS(DT_NODELABEL(rfsw_ctl))
+static int rf_antenna_apply(bool external)
+{
+    int err = 0;
+
+#if DT_NODE_EXISTS(DT_NODELABEL(rfsw_pwr))
+    if (!device_is_ready(rfsw_pwr_dev))
+    {
+        LOG_WRN("rfsw_pwr not ready");
+        return -ENODEV;
+    }
+
+    err = regulator_enable(rfsw_pwr_dev);
+    if (err && err != -EALREADY)
+    {
+        LOG_ERR("rfsw_pwr enable failed (%d)", err);
+        return err;
+    }
+#endif
+
+#if DT_NODE_EXISTS(DT_NODELABEL(rfsw_ctl))
+    if (!device_is_ready(rfsw_ctl_dev))
+    {
+        LOG_WRN("rfsw_ctl not ready");
+        return -ENODEV;
+    }
+
+    if (external)
+    {
+        err = regulator_disable(rfsw_ctl_dev);
+    }
+    else
+    {
+        err = regulator_enable(rfsw_ctl_dev);
+    }
+
+    if (err && err != -EALREADY && err != -EBUSY)
+    {
+        LOG_ERR("rfsw_ctl %s failed (%d)", external ? "disable" : "enable", err);
+        return err;
+    }
+#endif
+
+    antenna_external = external;
+    LOG_INF("Antenna: %s", external ? "external (IPEX)" : "internal (ceramic)");
+    return 0;
+}
+#endif
+
+int ble_peripheral_antenna_set(bool external)
+{
+#if DT_NODE_EXISTS(DT_NODELABEL(rfsw_pwr)) || DT_NODE_EXISTS(DT_NODELABEL(rfsw_ctl))
+    return rf_antenna_apply(external);
+#else
+    ARG_UNUSED(external);
+    return -ENOTSUP;
+#endif
+}
+
+bool ble_peripheral_antenna_is_external(void)
+{
+#if DT_NODE_EXISTS(DT_NODELABEL(rfsw_pwr)) || DT_NODE_EXISTS(DT_NODELABEL(rfsw_ctl))
+    return antenna_external;
+#else
+    return false;
+#endif
+}
 
 #if IS_ENABLED(CONFIG_EXAMPLE_BATTERY_POWER_LED)
 static const struct gpio_dt_spec connect_led = GPIO_DT_SPEC_GET_OR(DT_ALIAS(led0), gpios, {});
@@ -179,7 +259,17 @@ void ble_peripheral_button_handler(void)
 
 int ble_peripheral_init(void)
 {
-    int err = bt_enable(NULL);
+    int err;
+
+#if DT_NODE_EXISTS(DT_NODELABEL(rfsw_pwr)) || DT_NODE_EXISTS(DT_NODELABEL(rfsw_ctl))
+    err = rf_antenna_apply(IS_ENABLED(CONFIG_EXAMPLE_ANTENNA_EXTERNAL));
+    if (err)
+    {
+        LOG_WRN("RF antenna init failed (%d); continuing with BLE", err);
+    }
+#endif
+
+    err = bt_enable(NULL);
     if (err)
     {
         LOG_ERR("Bluetooth init failed (err %d)", err);
