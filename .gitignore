@@ -11,11 +11,13 @@ sdkconfig.old
 *.egg
 certs/
 
+# Local west build trees (rebuild with west build / build scripts)
+examples/ble_gatt/build/
+examples/ble_gatt/build-*/
+
 # Local dual-build flash artifacts (rebuild with scripts/build_ble_gatt_xiao_dual.ps1)
-builds/xiao-ble-gatt-uart/zephyr.hex
-builds/xiao-ble-gatt-uart/zephyr.bin
-builds/xiao-ble-gatt-battery/zephyr.hex
-builds/xiao-ble-gatt-battery/zephyr.bin
+builds/xiao-ble-gatt-uart/
+builds/xiao-ble-gatt-battery/
 
 # Cert troubleshooting experiments (production uses src/goliothrootx1.der)
 src/isrgrootx1.der
